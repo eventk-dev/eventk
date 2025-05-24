@@ -5,7 +5,7 @@ plugins {
     id("maven-publish")
 }
 
-group = "dev.eskt"
+group = "dev.eventk"
 
 kotlin {
     jvmToolchain(17)
@@ -39,7 +39,7 @@ publishing {
     repositories {
         // from https://docs.github.com/en/actions/publishing-packages/publishing-java-packages-with-gradle#publishing-packages-to-github-packages
         maven {
-            url = URI("https://maven.pkg.github.com/eskt-dev/eskt")
+            url = URI("https://maven.pkg.github.com/eventk-dev/eventk")
             credentials {
                 username = System.getenv("GITHUB_ACTOR")
                 password = System.getenv("GITHUB_TOKEN")

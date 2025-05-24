@@ -3,7 +3,7 @@ plugins {
     kotlin("plugin.serialization")
 }
 
-group = "dev.eskt"
+group = "dev.eventk"
 
 kotlin {
     setupPlatforms(ios = false)

@@ -10,7 +10,7 @@ pluginManagement {
     }
 }
 
-rootProject.name = "eskt-parent"
+rootProject.name = "eventk-parent"
 
 include(":event-store:api")
 include(":event-store:impl-common")
