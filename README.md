@@ -1,6 +1,7 @@
-# Event Sourcing Kotlin Toolkit
+# Eventk
 
-This project aims to provide a toolkit to work with event sourcing, as well as some related architectural patterns such as CQRS and DDD, written 100% in Kotlin.
+This project aims to provide a toolkit that makes working with event sourcing much easier.
+Some related architectural patterns, such as CQRS and DDD, will also be covered.
 
 We aim to support all Kotlin targets relevant for server-side development, such as Kotlin/JVM, Kotlin/Native (Linux and macOS, arm64 and amd64) and Kotlin/JS.
 
