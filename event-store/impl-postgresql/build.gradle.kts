@@ -23,7 +23,9 @@ kotlin {
         }
         jvmMain {
             dependencies {
-                implementation(libs.postgresql.jdbc)
+                compileOnly(libs.postgresql.jdbc)
+                compileOnly(libs.postgresql.r2dbc)
+                implementation(libs.kotlinx.coroutines.reactive)
             }
         }
         jvmTest {

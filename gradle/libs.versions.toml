@@ -8,11 +8,13 @@ spring6 = "6.0.14"
 uuid = "0.8.2"
 okio = "3.9.1"
 postgresql-jdbc = "42.6.0"
+postgresql-r2dbc = "1.0.7.RELEASE"
 hikaricp = "5.0.1"
 
 [libraries]
 
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
+kotlinx-coroutines-reactive = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-reactive", version.ref = "kotlinx-coroutines" }
 
 kotlinx-atomicfu = { group = "org.jetbrains.kotlinx", name = "atomicfu", version.ref = "kotlinx-atomicfu" }
 
@@ -33,4 +35,5 @@ spring6-beans = { group = "org.springframework", name = "spring-beans", version.
 spring6-tx = { group = "org.springframework", name = "spring-tx", version.ref = "spring6" }
 
 postgresql-jdbc = { group = "org.postgresql", name = "postgresql", version.ref = "postgresql-jdbc" }
+postgresql-r2dbc = { group = "org.postgresql", name = "r2dbc-postgresql", version.ref = "postgresql-r2dbc" }
 hikaricp = { group = "com.zaxxer", name = "HikariCP", version.ref = "hikaricp" }
