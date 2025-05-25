@@ -8,7 +8,7 @@ plugins {
     kotlin("plugin.jpa") version "1.9.22"
 }
 
-group = "dev.eskt.example"
+group = "dev.eventk.example"
 version = "0.0.1-SNAPSHOT"
 
 java {
@@ -28,8 +28,8 @@ dependencies {
 
     // project
     implementation(project(":domain"))
-    implementation("dev.eskt:impl-postgresql")
-    implementation("dev.eskt:hex-arch-adapters-spring6")
+    implementation("dev.eventk:impl-postgresql")
+    implementation("dev.eventk:hex-arch-adapters-spring6")
 
     // runtime
     runtimeOnly("com.h2database:h2")

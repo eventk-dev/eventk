@@ -2,7 +2,7 @@ plugins {
     kotlin("multiplatform")
 }
 
-group = "dev.eskt.example"
+group = "dev.eventk.example"
 version = "0.0.1-SNAPSHOT"
 
 kotlin {
@@ -17,9 +17,9 @@ kotlin {
     sourceSets {
         commonMain {
             dependencies {
-                api("dev.eskt:api")
-                api("dev.eskt:hex-arch-ports")
-                api("dev.eskt:test-harness-model")
+                api("dev.eventk:api")
+                api("dev.eventk:hex-arch-ports")
+                api("dev.eventk:test-harness-model")
                 api("com.benasher44:uuid:0.8.2")
             }
         }

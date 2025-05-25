@@ -2,7 +2,7 @@ plugins {
     standardMultiplatformModule()
 }
 
-group = "dev.eskt"
+group = "dev.eventk"
 
 kotlin {
     setupPlatforms(ios = false, node = false)
