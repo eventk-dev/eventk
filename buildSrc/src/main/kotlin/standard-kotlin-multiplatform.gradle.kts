@@ -3,7 +3,7 @@ import org.gradle.kotlin.dsl.kotlin
 plugins {
     kotlin("multiplatform")
     id("com.diffplug.spotless")
-    id("maven-publish")
+    id("com.vanniktech.maven.publish")
 }
 
 kotlin {
