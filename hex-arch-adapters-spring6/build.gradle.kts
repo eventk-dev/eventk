@@ -1,8 +1,10 @@
-import java.net.URI
+import com.vanniktech.maven.publish.KotlinJvm
+import com.vanniktech.maven.publish.SonatypeHost
+import kotlin.text.endsWith
 
 plugins {
     kotlin("jvm")
-    id("maven-publish")
+    id("com.vanniktech.maven.publish")
 }
 
 group = "dev.eventk"
@@ -10,10 +12,6 @@ group = "dev.eventk"
 kotlin {
     jvmToolchain(17)
     explicitApi()
-}
-
-java {
-    withSourcesJar()
 }
 
 dependencies {
@@ -29,21 +27,15 @@ dependencies {
     compileOnly(libs.spring6.tx)
 }
 
-publishing {
-    publications {
-        create<MavenPublication>("maven") {
-            artifactId = "hex-arch-adapters-spring6"
-            from(components["java"])
-        }
-    }
-    repositories {
-        // from https://docs.github.com/en/actions/publishing-packages/publishing-java-packages-with-gradle#publishing-packages-to-github-packages
-        maven {
-            url = URI("https://maven.pkg.github.com/eventk-dev/eventk")
-            credentials {
-                username = System.getenv("GITHUB_ACTOR")
-                password = System.getenv("GITHUB_TOKEN")
-            }
-        }
+mavenPublishing {
+    val version = project.version.toString()
+    coordinates(
+        groupId = "dev.eventk",
+        artifactId = "hex-arch-adapters-spring6",
+        version = version,
+    )
+    publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
+    if (!version.endsWith("-SNAPSHOT")) {
+        signAllPublications()
     }
 }
