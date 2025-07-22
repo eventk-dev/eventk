@@ -13,12 +13,12 @@ kotlin {
 spotless {
     kotlin {
         target("**/src/**/*.kt")
-        ktlint("1.5.0")
+        ktlint("1.7.1")
             .setEditorConfigPath("${rootProject.projectDir}/.editorconfig")
     }
     kotlinGradle {
         target("**/build.gradle.kts", "**/settings.gradle.kts")
-        ktlint("1.5.0")
+        ktlint("1.7.1")
             .setEditorConfigPath("${rootProject.projectDir}/.editorconfig")
     }
 }
