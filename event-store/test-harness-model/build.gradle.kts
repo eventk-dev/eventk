@@ -1,6 +1,6 @@
 plugins {
     id("standard-kotlin-multiplatform")
-    kotlin("plugin.serialization")
+    id("standard-serialization")
 }
 
 group = "dev.eventk"
