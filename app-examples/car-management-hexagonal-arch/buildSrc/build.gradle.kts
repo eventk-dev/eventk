@@ -12,5 +12,4 @@ kotlin {
 
 dependencies {
     implementation("org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.22")
-    implementation(kotlin("serialization", version = "1.9.22"))
 }
