@@ -16,6 +16,4 @@ kotlin {
     }
 }
 
-setupCompiler()
-
 setupPublishing("event-store-api")
