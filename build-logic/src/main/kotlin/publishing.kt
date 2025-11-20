@@ -1,6 +1,6 @@
 import com.vanniktech.maven.publish.MavenPublishBaseExtension
 import com.vanniktech.maven.publish.SonatypeHost
-import gradle.kotlin.dsl.accessors._a752b004c685f16d54fd070b1334a77d.mavenPublishing
+import gradle.kotlin.dsl.accessors._05f7fd8afcbc155a1402654be1db5c57.mavenPublishing
 import org.gradle.api.Project
 
 fun MavenPublishBaseExtension.publishingConfig() {
