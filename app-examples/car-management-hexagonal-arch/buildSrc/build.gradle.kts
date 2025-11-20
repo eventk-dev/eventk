@@ -11,6 +11,6 @@ kotlin {
 }
 
 dependencies {
-    implementation("org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.22")
-    implementation(kotlin("serialization", version = "1.9.22"))
+    implementation("org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.21")
+    implementation(kotlin("serialization", version = "2.2.21"))
 }
