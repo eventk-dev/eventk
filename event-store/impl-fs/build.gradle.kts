@@ -33,6 +33,4 @@ kotlin {
     }
 }
 
-setupCompiler()
-
 setupPublishing("event-store-impl-fs")

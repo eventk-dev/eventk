@@ -1,4 +1,5 @@
 import org.gradle.kotlin.dsl.kotlin
+import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
 plugins {
     kotlin("multiplatform")
@@ -8,6 +9,11 @@ plugins {
 
 kotlin {
     explicitApi()
+    compilerOptions {
+        apiVersion.set(KotlinVersion.KOTLIN_2_0)
+        progressiveMode.set(true)
+        freeCompilerArgs.add("-Xexpect-actual-classes")
+    }
 }
 
 spotless {
