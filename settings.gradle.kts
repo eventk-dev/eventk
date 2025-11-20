@@ -12,6 +12,8 @@ pluginManagement {
 
 rootProject.name = "eventk-parent"
 
+includeBuild("build-logic")
+
 include(":event-store:api")
 include(":event-store:impl-common")
 

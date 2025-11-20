@@ -58,7 +58,7 @@ public class EventListenerExecutorService(
     private fun init() {
         logger.info(
             "Starting listener processes for ${singleStreamTypeEventListeners.size} single event listeners " +
-                    "and ${multiStreamTypeEventListeners.size} multi event listeners...",
+                "and ${multiStreamTypeEventListeners.size} multi event listeners...",
         )
 
         singleStreamTypeEventListeners.forEach { genericListener ->

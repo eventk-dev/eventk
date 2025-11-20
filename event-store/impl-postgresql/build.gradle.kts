@@ -1,5 +1,5 @@
 plugins {
-    standardMultiplatformModule()
+    id("standard-kotlin-multiplatform")
 }
 
 group = "dev.eventk"

@@ -1,10 +1,8 @@
-import com.vanniktech.maven.publish.KotlinJvm
 import com.vanniktech.maven.publish.SonatypeHost
 import kotlin.text.endsWith
 
 plugins {
-    kotlin("jvm")
-    id("com.vanniktech.maven.publish")
+    id("standard-kotlin-jvm")
 }
 
 group = "dev.eventk"
