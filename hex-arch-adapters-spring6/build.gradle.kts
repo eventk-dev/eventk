@@ -26,6 +26,7 @@ dependencies {
 }
 
 mavenPublishing {
+    publishingConfig()
     val version = project.version.toString()
     coordinates(
         groupId = "dev.eventk",

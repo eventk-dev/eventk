@@ -1,3 +1,5 @@
 #!/usr/bin/env bash
 
-./gradlew -Pversion=0.0.1-SNAPSHOT --parallel --max-workers 8 publishAllPublicationsToMavenCentralRepository
+./gradlew -Pversion=$1 --parallel --max-workers 8 \
+    clean \
+    publishAllPublicationsToMavenCentralRepository \
