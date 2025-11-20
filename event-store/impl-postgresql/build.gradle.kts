@@ -34,6 +34,4 @@ kotlin {
     }
 }
 
-setupCompiler()
-
 setupPublishing("event-store-impl-postgresql")
