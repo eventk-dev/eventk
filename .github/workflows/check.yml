@@ -34,7 +34,7 @@ jobs:
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v4
     - name: Check with Gradle
-      run: ./gradlew check
+      run: ./gradlew -Pversion=local-SNAPSHOT check publishToMavenLocal
     - name: Check App Examples with Gradle
       working-directory: app-examples/car-management-hexagonal-arch
       run: ./gradlew check

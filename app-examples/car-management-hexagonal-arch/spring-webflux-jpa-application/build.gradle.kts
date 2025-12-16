@@ -1,5 +1,3 @@
-import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
-
 plugins {
     id("org.springframework.boot") version "3.1.5"
     id("io.spring.dependency-management") version "1.1.3"
@@ -15,6 +13,14 @@ java {
     sourceCompatibility = JavaVersion.VERSION_17
 }
 
+kotlin {
+    compilerOptions  {
+        freeCompilerArgs.add("-Xjsr305=strict")
+        freeCompilerArgs.add("-Xjvm-default=all")
+    }
+    jvmToolchain(17)
+}
+
 dependencies {
     // spring
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
@@ -28,8 +34,8 @@ dependencies {
 
     // project
     implementation(project(":domain"))
-    implementation("dev.eventk:impl-postgresql")
-    implementation("dev.eventk:hex-arch-adapters-spring6")
+    implementation("dev.eventk:event-store-impl-postgresql:local-SNAPSHOT")
+    implementation("dev.eventk:hex-arch-adapters-spring6:local-SNAPSHOT")
 
     // runtime
     runtimeOnly("com.h2database:h2")
@@ -39,14 +45,6 @@ dependencies {
     testImplementation(kotlin("test"))
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("io.projectreactor:reactor-test")
-}
-
-tasks.withType<KotlinCompile> {
-    kotlinOptions {
-        freeCompilerArgs += "-Xjsr305=strict"
-        freeCompilerArgs += "-Xjvm-default=all"
-        jvmTarget = "17"
-    }
 }
 
 tasks.withType<Test> {
