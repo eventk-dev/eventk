@@ -28,5 +28,3 @@ kotlin {
         }
     }
 }
-
-setupCompiler()

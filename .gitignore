@@ -8,3 +8,6 @@ $ Idea
 
 # fs, Postgresql
 data/
+
+# Kotlin
+.kotlin
