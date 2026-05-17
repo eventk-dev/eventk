@@ -15,7 +15,6 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 class EventListenerExecutorServiceTest {
-
     private object TestStreamType : StreamType<String, String> {
         override val id = "test"
     }
@@ -23,7 +22,9 @@ class EventListenerExecutorServiceTest {
     private class InMemoryBookmark : Bookmark {
         private val positions = mutableMapOf<String, Long>()
         override fun get(id: String) = positions[id] ?: 0L
-        override fun set(id: String, value: Long) { positions[id] = value }
+        override fun set(id: String, value: Long) {
+            positions[id] = value
+        }
     }
 
     private fun service(
@@ -45,7 +46,9 @@ class EventListenerExecutorServiceTest {
         val listener = object : SingleStreamTypeEventListener<String, String> {
             override val id = "test-listener"
             override val streamType: StreamType<String, String> = TestStreamType
-            override fun listen(envelope: EventEnvelope<String, String>) { received.complete(envelope) }
+            override fun listen(envelope: EventEnvelope<String, String>) {
+                received.complete(envelope)
+            }
         }
         val store = InMemoryEventStore { registerStreamType(TestStreamType) }
         store.withStreamType(TestStreamType)
@@ -74,7 +77,9 @@ class EventListenerExecutorServiceTest {
         val listener = object : MultiStreamTypeEventListener<String, String> {
             override val id = "multi-listener"
             override val streamTypes = listOf(TestStreamType)
-            override fun listen(envelope: EventEnvelope<String, String>) { received.complete(envelope) }
+            override fun listen(envelope: EventEnvelope<String, String>) {
+                received.complete(envelope)
+            }
         }
         val store = InMemoryEventStore { registerStreamType(TestStreamType) }
         store.withStreamType(TestStreamType).appendStream("stream-1", 0, listOf("hello"))
