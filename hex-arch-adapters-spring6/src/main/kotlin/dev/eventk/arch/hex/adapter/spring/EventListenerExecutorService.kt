@@ -142,8 +142,8 @@ public class EventListenerExecutorService(
         val eventListener = (singleStreamTypeEventListeners + multiStreamTypeEventListeners).single { it.id == id }
         @Suppress("UNCHECKED_CAST")
         jobs[eventListener.id] = when (eventListener) {
-            is SingleStreamTypeEventListener<*, *> -> startJob(eventListener as SingleStreamTypeEventListener<Any, Any>)
             is MultiStreamTypeEventListener<*, *> -> startJob(eventListener as MultiStreamTypeEventListener<Any, Any>)
+            is SingleStreamTypeEventListener<*, *> -> startJob(eventListener as SingleStreamTypeEventListener<Any, Any>)
         }
     }
 
