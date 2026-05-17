@@ -12,19 +12,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlin.time.Duration.Companion.milliseconds
 
-public fun EventStore.listenerEventFlow(
-    eventListener: EventListener,
-    sincePosition: Long,
-    batchSize: Int,
-): Flow<EventEnvelope<Any, Any>> = channelFlow {
-    @Suppress("UNCHECKED_CAST")
-    val loader: (Long) -> List<EventEnvelope<Any, Any>> = when (eventListener) {
-        is SingleStreamTypeEventListener<*, *> -> { pos -> loadEventBatch(pos, batchSize, eventListener.streamType as StreamType<Any, Any>) }
-        is MultiStreamTypeEventListener<*, *> -> { pos -> loadEventBatch(pos, batchSize) }
-    }
-    produce(sincePosition, loader, batchSize)
-}
-
 public fun <E, I> EventStore.singleStreamTypeEventFlow(
     streamType: StreamType<E, I>,
     sincePosition: Long,
@@ -39,6 +26,19 @@ public fun EventStore.multiStreamTypeEventFlow(
     batchSize: Int,
 ): Flow<EventEnvelope<Any, Any>> = channelFlow {
     val loader: (Long) -> List<EventEnvelope<Any, Any>> = { pos -> loadEventBatch(pos, batchSize) }
+    produce(sincePosition, loader, batchSize)
+}
+
+public fun EventStore.listenerEventFlow(
+    eventListener: EventListener,
+    sincePosition: Long,
+    batchSize: Int,
+): Flow<EventEnvelope<Any, Any>> = channelFlow {
+    @Suppress("UNCHECKED_CAST")
+    val loader: (Long) -> List<EventEnvelope<Any, Any>> = when (eventListener) {
+        is SingleStreamTypeEventListener<*, *> -> { pos -> loadEventBatch(pos, batchSize, eventListener.streamType as StreamType<Any, Any>) }
+        is MultiStreamTypeEventListener<*, *> -> { pos -> loadEventBatch(pos, batchSize) }
+    }
     produce(sincePosition, loader, batchSize)
 }
 
