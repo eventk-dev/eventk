@@ -2,22 +2,19 @@ package dev.eventk.arch.hex.adapter.ktor
 
 import dev.eventk.arch.hex.adapter.common.EventBatchTemplate
 import dev.eventk.arch.hex.adapter.common.EventListenerExecutorConfig
-import dev.eventk.arch.hex.adapter.common.listen
-import dev.eventk.arch.hex.adapter.common.listenerEventFlow
+import dev.eventk.arch.hex.adapter.common.Logger
+import dev.eventk.arch.hex.adapter.common.startJob
 import dev.eventk.arch.hex.port.Bookmark
 import dev.eventk.arch.hex.port.EventListener
 import dev.eventk.arch.hex.port.MultiStreamTypeEventListener
 import dev.eventk.arch.hex.port.SingleStreamTypeEventListener
 import dev.eventk.store.api.blocking.EventStore
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.newFixedThreadPoolContext
 
 public class EventListenerExecutorService(
@@ -31,18 +28,10 @@ public class EventListenerExecutorService(
     private val infoLogger: (messageGenerator: () -> String) -> Unit,
     private val errorLogger: (t: Throwable, messageGenerator: () -> String) -> Unit,
 ) {
-    private val logger = object {
-        fun info(messageGenerator: () -> String) {
-            infoLogger(messageGenerator)
-        }
-
-        fun debug(messageGenerator: () -> String) {
-            debugLogger(messageGenerator)
-        }
-
-        fun error(t: Throwable, messageGenerator: () -> String) {
-            errorLogger(t, messageGenerator)
-        }
+    private val logger: Logger = object : Logger {
+        override fun info(message: () -> String) = infoLogger(message)
+        override fun debug(message: () -> String) = debugLogger(message)
+        override fun error(t: Throwable, message: () -> String) = errorLogger(t, message)
     }
 
     @OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
@@ -95,35 +84,8 @@ public class EventListenerExecutorService(
         return startJob(eventListener, eventStore)
     }
 
-    private fun startJob(eventListener: EventListener, eventStore: EventStore): Job {
-        return scope.launch {
-            var retry = 0
-            while (!stopped) {
-                logger.info { "Starting collection of events for $eventListener" }
-                try {
-                    eventStore
-                        .listenerEventFlow(
-                            eventListener = eventListener,
-                            sincePosition = bookmark.get(eventListener.id),
-                            batchSize = config.batchSize,
-                        )
-                        .collect { envelope ->
-                            template.execute(eventStore, eventListener) {
-                                eventListener.listen(envelope)
-                                bookmark.set(eventListener.id, envelope.position)
-                            }
-                            if (retry > 0) retry = 0
-                            logger.debug { "Processed event position ${envelope.position} of type ${envelope.event::class.qualifiedName} in $eventListener" }
-                        }
-                } catch (e: Exception) {
-                    if (e is CancellationException) throw e
-                    val backoff = config.errorBackoff.backoff(++retry)
-                    logger.error(e) { "Error while collecting events in $eventListener, will try to restart in $backoff" }
-                    if (!stopped) delay(backoff)
-                }
-            }
-        }
-    }
+    private fun startJob(eventListener: EventListener, eventStore: EventStore): Job =
+        startJob(scope, eventListener, eventStore, bookmark, logger, template, config.errorBackoff, config.batchSize) { stopped }
 
     public fun shutdown() {
         logger.info { "Shutting down..." }
