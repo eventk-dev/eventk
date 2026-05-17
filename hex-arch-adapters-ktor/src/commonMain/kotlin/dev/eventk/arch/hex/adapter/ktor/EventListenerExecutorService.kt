@@ -101,7 +101,12 @@ public class EventListenerExecutorService(
             while (!stopped) {
                 logger.info { "Starting collection of events for $eventListener" }
                 try {
-                    eventStore.listenerEventFlow(eventListener, bookmark.get(eventListener.id), config.batchSize)
+                    eventStore
+                        .listenerEventFlow(
+                            eventListener = eventListener,
+                            sincePosition = bookmark.get(eventListener.id),
+                            batchSize = config.batchSize,
+                        )
                         .collect { envelope ->
                             template.execute(eventStore, eventListener) {
                                 eventListener.listen(envelope)
