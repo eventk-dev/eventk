@@ -2,9 +2,10 @@ package dev.eventk.arch.hex.adapter.ktor
 
 import dev.eventk.arch.hex.adapter.common.EventBatchTemplate
 import dev.eventk.arch.hex.adapter.common.EventListenerExecutorConfig
-import dev.eventk.arch.hex.adapter.common.multiStreamTypeEventFlow
-import dev.eventk.arch.hex.adapter.common.singleStreamTypeEventFlow
+import dev.eventk.arch.hex.adapter.common.listen
+import dev.eventk.arch.hex.adapter.common.listenerEventFlow
 import dev.eventk.arch.hex.port.Bookmark
+import dev.eventk.arch.hex.port.EventListener
 import dev.eventk.arch.hex.port.MultiStreamTypeEventListener
 import dev.eventk.arch.hex.port.SingleStreamTypeEventListener
 import dev.eventk.store.api.blocking.EventStore
@@ -70,15 +71,13 @@ public class EventListenerExecutorService(
                 "and ${multiStreamTypeEventListeners.size} multi event listeners..."
         }
 
-        singleStreamTypeEventListeners.forEach { genericListener ->
+        singleStreamTypeEventListeners.forEach { listener ->
             @Suppress("UNCHECKED_CAST")
-            val eventListener = genericListener as SingleStreamTypeEventListener<Any, Any>
-            jobs[eventListener.id] = startJob(eventListener)
+            jobs[listener.id] = startJob(listener as SingleStreamTypeEventListener<Any, Any>)
         }
-        multiStreamTypeEventListeners.forEach { genericListener ->
+        multiStreamTypeEventListeners.forEach { listener ->
             @Suppress("UNCHECKED_CAST")
-            val eventListener = genericListener as MultiStreamTypeEventListener<Any, Any>
-            jobs[eventListener.id] = startJob(eventListener)
+            jobs[listener.id] = startJob(listener as MultiStreamTypeEventListener<Any, Any>)
         }
     }
 
@@ -86,46 +85,25 @@ public class EventListenerExecutorService(
         val eventStore = eventStores
             .singleOrNull { eventListener.streamType in it.registeredTypes }
             ?: throw IllegalStateException("$eventListener has a stream type which needs to be registered in one (and only one) event store.")
-        return scope.launch {
-            var retry = 0
-            while (!stopped) {
-                logger.info { "Starting collection of events for $eventListener" }
-                try {
-                    eventStore
-                        .singleStreamTypeEventFlow<Any, Any>(
-                            streamType = eventListener.streamType,
-                            sincePosition = bookmark.get(eventListener.id),
-                            batchSize = config.batchSize,
-                        )
-                        .collect { envelope ->
-                            template.execute(eventStore, eventListener) {
-                                eventListener.listen(envelope)
-                                bookmark.set(eventListener.id, envelope.position)
-                            }
-                            if (retry > 0) retry = 0
-                            logger.debug { "Processed event position ${envelope.position} of type ${envelope.event::class.qualifiedName} in $eventListener" }
-                        }
-                } catch (e: Exception) {
-                    if (e is CancellationException) throw e
-                    val backoff = config.errorBackoff.backoff(++retry)
-                    logger.error(e) { "Error while collecting events in $eventListener, will try to restart in $backoff" }
-                    if (!stopped) delay(backoff)
-                }
-            }
-        }
+        return startJob(eventListener, eventStore)
     }
 
     private fun startJob(eventListener: MultiStreamTypeEventListener<Any, Any>): Job {
         val eventStore = eventStores
             .singleOrNull { es -> eventListener.streamTypes.all { st -> st in es.registeredTypes } }
             ?: throw IllegalStateException("$eventListener has a stream type which needs to be registered in one (and only one) event store.")
+        return startJob(eventListener, eventStore)
+    }
+
+    private fun startJob(eventListener: EventListener, eventStore: EventStore): Job {
         return scope.launch {
             var retry = 0
             while (!stopped) {
                 logger.info { "Starting collection of events for $eventListener" }
                 try {
                     eventStore
-                        .multiStreamTypeEventFlow(
+                        .listenerEventFlow(
+                            eventListener = eventListener,
                             sincePosition = bookmark.get(eventListener.id),
                             batchSize = config.batchSize,
                         )
