@@ -2,6 +2,7 @@ package dev.eventk.arch.hex.adapter.common
 
 import dev.eventk.arch.hex.port.Bookmark
 import dev.eventk.arch.hex.port.EventListener
+import dev.eventk.store.api.EventEnvelope
 import dev.eventk.store.api.blocking.EventStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -14,7 +15,7 @@ public fun startJob(
     eventListener: EventListener,
     eventStore: EventStore,
     bookmark: Bookmark,
-    logger: Logger,
+    observer: Observer,
     template: EventBatchTemplate,
     errorBackoff: BackoffStrategy,
     readBatchSize: Int,
@@ -22,7 +23,7 @@ public fun startJob(
 ): Job = scope.launch {
     var retry = 0
     while (!isStopped()) {
-        logger.info { "Starting collection of events for $eventListener" }
+        observer.started(eventListener)
         try {
             eventStore
                 .listenerEventFlow(
@@ -31,18 +32,32 @@ public fun startJob(
                     batchSize = readBatchSize,
                 )
                 .collect { envelope ->
-                    template.execute(eventStore, eventListener) {
-                        eventListener.listen(envelope)
-                        bookmark.set(eventListener.id, envelope.position)
+                    try {
+                        template.execute(eventStore, eventListener) {
+                            eventListener.listen(envelope)
+                            bookmark.set(eventListener.id, envelope.position)
+                        }
+                        observer.envelopeCompleted(eventListener, envelope)
+                        if (retry > 0) retry = 0
+                    } catch (e: RuntimeException) {
+                        throw EnvelopeCollectionException(envelope, e)
                     }
-                    if (retry > 0) retry = 0
-                    logger.debug { "Processed event position ${envelope.position} of type ${envelope.event::class.simpleName} in $eventListener" }
                 }
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             val backoff = errorBackoff.backoff(++retry)
-            logger.error(e) { "Error while collecting events in $eventListener, will try to restart in $backoff" }
+            when (e) {
+                is EnvelopeCollectionException -> observer.envelopeFailed(eventListener, e.envelope, e.cause!!, backoff)
+                else -> observer.failed(eventListener, e, backoff)
+            }
             if (!isStopped()) delay(backoff)
         }
     }
+    observer.finished(eventListener)
 }
+
+private class EnvelopeCollectionException(public val envelope: EventEnvelope<Any, Any>, cause: Throwable) :
+    RuntimeException(
+        "Error while collecting $envelope",
+        cause,
+    )

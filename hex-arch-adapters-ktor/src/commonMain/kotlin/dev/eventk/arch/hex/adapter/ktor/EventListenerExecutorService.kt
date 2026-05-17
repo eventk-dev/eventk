@@ -2,12 +2,13 @@ package dev.eventk.arch.hex.adapter.ktor
 
 import dev.eventk.arch.hex.adapter.common.EventBatchTemplate
 import dev.eventk.arch.hex.adapter.common.EventListenerExecutorConfig
-import dev.eventk.arch.hex.adapter.common.Logger
+import dev.eventk.arch.hex.adapter.common.Observer
 import dev.eventk.arch.hex.adapter.common.startJob
 import dev.eventk.arch.hex.port.Bookmark
 import dev.eventk.arch.hex.port.EventListener
 import dev.eventk.arch.hex.port.MultiStreamTypeEventListener
 import dev.eventk.arch.hex.port.SingleStreamTypeEventListener
+import dev.eventk.store.api.EventEnvelope
 import dev.eventk.store.api.blocking.EventStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.DelicateCoroutinesApi
@@ -16,6 +17,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.newFixedThreadPoolContext
+import kotlin.time.Duration
 
 public class EventListenerExecutorService(
     private val eventStores: List<EventStore>,
@@ -28,10 +30,17 @@ public class EventListenerExecutorService(
     private val infoLogger: (messageGenerator: () -> String) -> Unit,
     private val errorLogger: (t: Throwable, messageGenerator: () -> String) -> Unit,
 ) {
-    private val logger: Logger = object : Logger {
-        override fun info(message: () -> String) = infoLogger(message)
-        override fun debug(message: () -> String) = debugLogger(message)
-        override fun error(t: Throwable, message: () -> String) = errorLogger(t, message)
+    private val observer: Observer = object : Observer {
+        override fun started(eventListener: EventListener) =
+            infoLogger { "Starting collection of events for $eventListener" }
+        override fun finished(eventListener: EventListener) =
+            infoLogger { "Finished collection of events for $eventListener" }
+        override fun envelopeCompleted(eventListener: EventListener, envelope: EventEnvelope<Any, Any>) =
+            debugLogger { "Collected $envelope in $eventListener" }
+        override fun envelopeFailed(eventListener: EventListener, envelope: EventEnvelope<Any, Any>, t: Throwable, backoff: Duration) =
+            errorLogger(t) { "Error while collecting $envelope in $eventListener, will try to restart in $backoff" }
+        override fun failed(eventListener: EventListener, t: Throwable, backoff: Duration) =
+            errorLogger(t) { "Error while collecting flow in $eventListener, will try to restart in $backoff" }
     }
 
     @OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
@@ -55,7 +64,7 @@ public class EventListenerExecutorService(
     }
 
     public fun init() {
-        logger.info {
+        infoLogger {
             "Starting listener processes for ${singleStreamTypeEventListeners.size} single event listeners " +
                 "and ${multiStreamTypeEventListeners.size} multi event listeners..."
         }
@@ -85,10 +94,10 @@ public class EventListenerExecutorService(
     }
 
     private fun startJob(eventListener: EventListener, eventStore: EventStore): Job =
-        startJob(scope, eventListener, eventStore, bookmark, logger, template, config.errorBackoff, config.batchSize) { stopped }
+        startJob(scope, eventListener, eventStore, bookmark, observer, template, config.errorBackoff, config.batchSize) { stopped }
 
     public fun shutdown() {
-        logger.info { "Shutting down..." }
+        infoLogger { "Shutting down..." }
         stopped = true
         supervisor.cancel("Shutting down")
         dispatcher.close()

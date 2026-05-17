@@ -2,11 +2,13 @@ package dev.eventk.arch.hex.adapter.spring
 
 import dev.eventk.arch.hex.adapter.common.EventBatchTemplate
 import dev.eventk.arch.hex.adapter.common.EventListenerExecutorConfig
+import dev.eventk.arch.hex.adapter.common.Observer
 import dev.eventk.arch.hex.adapter.common.startJob
 import dev.eventk.arch.hex.port.Bookmark
 import dev.eventk.arch.hex.port.EventListener
 import dev.eventk.arch.hex.port.MultiStreamTypeEventListener
 import dev.eventk.arch.hex.port.SingleStreamTypeEventListener
+import dev.eventk.store.api.EventEnvelope
 import dev.eventk.store.api.blocking.EventStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.DelicateCoroutinesApi
@@ -19,6 +21,7 @@ import org.springframework.beans.factory.DisposableBean
 import org.springframework.beans.factory.InitializingBean
 import org.springframework.stereotype.Component
 import kotlin.IllegalArgumentException
+import kotlin.time.Duration
 
 @Component
 public class EventListenerExecutorService(
@@ -30,15 +33,23 @@ public class EventListenerExecutorService(
     private val template: EventBatchTemplate = EventBatchTemplate.NoOp(),
 ) : InitializingBean, DisposableBean {
     private val slf4jLogger = LoggerFactory.getLogger(EventListenerExecutorService::class.java)
-    private val logger = object : dev.eventk.arch.hex.adapter.common.Logger {
-        override fun info(message: () -> String) {
-            if (slf4jLogger.isInfoEnabled) slf4jLogger.info(message())
+    private val observer = object : Observer {
+        override fun started(eventListener: EventListener) {
+            if (slf4jLogger.isInfoEnabled) slf4jLogger.info("Starting collection of events for $eventListener")
         }
-        override fun debug(message: () -> String) {
-            if (slf4jLogger.isDebugEnabled) slf4jLogger.debug(message())
+
+        override fun finished(eventListener: EventListener) {
+            if (slf4jLogger.isInfoEnabled) slf4jLogger.info("Finished collection of events for $eventListener")
         }
-        override fun error(t: Throwable, message: () -> String) {
-            slf4jLogger.error(message(), t)
+
+        override fun envelopeCompleted(eventListener: EventListener, envelope: EventEnvelope<Any, Any>) {
+            if (slf4jLogger.isDebugEnabled) slf4jLogger.debug("Collected $envelope in $eventListener")
+        }
+        override fun envelopeFailed(eventListener: EventListener, envelope: EventEnvelope<Any, Any>, t: Throwable, backoff: Duration) {
+            slf4jLogger.error("Error while collecting $envelope in $eventListener, will try to restart in $backoff", t)
+        }
+        override fun failed(eventListener: EventListener, t: Throwable, backoff: Duration) {
+            slf4jLogger.error("Error while collecting flow in $eventListener, will try to restart in $backoff", t)
         }
     }
 
@@ -93,7 +104,7 @@ public class EventListenerExecutorService(
     }
 
     private fun startJob(eventListener: EventListener, eventStore: EventStore): Job =
-        startJob(scope, eventListener, eventStore, bookmark, logger, template, config.errorBackoff, config.batchSize) { stopped }
+        startJob(scope, eventListener, eventStore, bookmark, observer, template, config.errorBackoff, config.batchSize) { stopped }
 
     private fun shutdown() {
         slf4jLogger.info("Shutting down...")

@@ -17,7 +17,9 @@ class EventListenerExecutorServiceTest {
     private class InMemoryBookmark : Bookmark {
         private val positions = mutableMapOf<String, Long>()
         override fun get(id: String) = positions[id] ?: 0L
-        override fun set(id: String, value: Long) { positions[id] = value }
+        override fun set(id: String, value: Long) {
+            positions[id] = value
+        }
     }
 
     @Test
