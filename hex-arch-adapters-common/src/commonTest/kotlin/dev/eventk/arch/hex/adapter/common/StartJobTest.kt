@@ -3,6 +3,7 @@ package dev.eventk.arch.hex.adapter.common
 import dev.eventk.arch.hex.port.Bookmark
 import dev.eventk.arch.hex.port.EventListener
 import dev.eventk.arch.hex.port.MultiStreamTypeEventListener
+import dev.eventk.arch.hex.port.SingleEventListener
 import dev.eventk.arch.hex.port.SingleStreamTypeEventListener
 import dev.eventk.store.api.EventEnvelope
 import dev.eventk.store.api.StreamType
@@ -35,8 +36,8 @@ class StartJobTest {
     private val noopObserver = object : Observer {
         override fun started(eventListener: EventListener) = Unit
         override fun finished(eventListener: EventListener) = Unit
-        override fun envelopeCompleted(eventListener: EventListener, envelope: EventEnvelope<Any, Any>) = Unit
-        override fun envelopeFailed(eventListener: EventListener, envelope: EventEnvelope<Any, Any>, t: Throwable, backoff: Duration) = Unit
+        override fun envelopeCompleted(eventListener: SingleEventListener, envelope: EventEnvelope<Any, Any>) = Unit
+        override fun envelopeFailed(eventListener: SingleEventListener, envelope: EventEnvelope<Any, Any>, t: Throwable, backoff: Duration) = Unit
         override fun failed(eventListener: EventListener, t: Throwable, backoff: Duration) = Unit
     }
 
@@ -61,7 +62,7 @@ class StartJobTest {
             bookmark = InMemoryBookmark(),
             observer = noopObserver,
             template = EventBatchTemplate.NoOp(),
-            errorBackoff = BackoffStrategy.Constant(5.seconds),
+            backoff = BackoffStrategy.Constant(5.seconds),
             readBatchSize = 10,
         ) { false }
 
@@ -95,15 +96,14 @@ class StartJobTest {
             observer = object : Observer {
                 override fun started(eventListener: EventListener) = Unit
                 override fun finished(eventListener: EventListener) = Unit
-                override fun envelopeCompleted(eventListener: EventListener, envelope: EventEnvelope<Any, Any>) = Unit
-                override fun envelopeFailed(eventListener: EventListener, envelope: EventEnvelope<Any, Any>, t: Throwable, backoff: Duration) {
+                override fun envelopeCompleted(eventListener: SingleEventListener, envelope: EventEnvelope<Any, Any>) = Unit
+                override fun envelopeFailed(eventListener: SingleEventListener, envelope: EventEnvelope<Any, Any>, t: Throwable, backoff: Duration) {
                     failedEnvelopeFuture.complete(envelope)
                 }
-
                 override fun failed(eventListener: EventListener, t: Throwable, backoff: Duration) = Unit
             },
             template = EventBatchTemplate.NoOp(),
-            errorBackoff = BackoffStrategy.Constant(5.seconds),
+            backoff = BackoffStrategy.Constant(5.seconds),
             readBatchSize = 10,
         ) { false }
 
@@ -136,7 +136,7 @@ class StartJobTest {
             bookmark = InMemoryBookmark(),
             observer = noopObserver,
             template = EventBatchTemplate.NoOp(),
-            errorBackoff = BackoffStrategy.Constant(5.seconds),
+            backoff = BackoffStrategy.Constant(5.seconds),
             readBatchSize = 10,
         ) { false }
 

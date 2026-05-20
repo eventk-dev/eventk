@@ -3,10 +3,15 @@ package dev.eventk.arch.hex.adapter.spring
 import dev.eventk.arch.hex.adapter.common.EventBatchTemplate
 import dev.eventk.arch.hex.adapter.common.EventListenerExecutorConfig
 import dev.eventk.arch.hex.adapter.common.Observer
+import dev.eventk.arch.hex.adapter.common.launchBatchListener
 import dev.eventk.arch.hex.adapter.common.launchListener
+import dev.eventk.arch.hex.port.BatchEventListener
 import dev.eventk.arch.hex.port.Bookmark
 import dev.eventk.arch.hex.port.EventListener
+import dev.eventk.arch.hex.port.MultiStreamTypeBatchEventListener
 import dev.eventk.arch.hex.port.MultiStreamTypeEventListener
+import dev.eventk.arch.hex.port.SingleEventListener
+import dev.eventk.arch.hex.port.SingleStreamTypeBatchEventListener
 import dev.eventk.arch.hex.port.SingleStreamTypeEventListener
 import dev.eventk.store.api.EventEnvelope
 import dev.eventk.store.api.blocking.EventStore
@@ -27,25 +32,30 @@ import kotlin.time.Duration
 public class EventListenerExecutorService(
     private val eventStores: List<EventStore>,
     private val bookmark: Bookmark,
-    private val singleStreamTypeEventListeners: List<SingleStreamTypeEventListener<*, *>>,
-    private val multiStreamTypeEventListeners: List<MultiStreamTypeEventListener<*, *>>,
+    singleStreamTypeEventListeners: List<SingleStreamTypeEventListener<*, *>>,
+    multiStreamTypeEventListeners: List<MultiStreamTypeEventListener<*, *>>,
+    batchSingleStreamTypeEventListeners: List<SingleStreamTypeBatchEventListener<*, *>> = emptyList(),
+    batchMultiStreamTypeEventListeners: List<MultiStreamTypeBatchEventListener<*, *>> = emptyList(),
     private val config: EventListenerExecutorConfig = EventListenerExecutorConfig(),
     private val template: EventBatchTemplate = EventBatchTemplate.NoOp(),
 ) : InitializingBean, DisposableBean {
+    private val singleEventListeners: List<SingleEventListener> =
+        singleStreamTypeEventListeners + multiStreamTypeEventListeners
+    private val batchEventListeners: List<BatchEventListener> =
+        batchSingleStreamTypeEventListeners + batchMultiStreamTypeEventListeners
+
     private val slf4jLogger = LoggerFactory.getLogger(EventListenerExecutorService::class.java)
     private val observer = object : Observer {
         override fun started(eventListener: EventListener) {
             if (slf4jLogger.isInfoEnabled) slf4jLogger.info("Starting collection of events for $eventListener")
         }
-
         override fun finished(eventListener: EventListener) {
             if (slf4jLogger.isInfoEnabled) slf4jLogger.info("Finished collection of events for $eventListener")
         }
-
-        override fun envelopeCompleted(eventListener: EventListener, envelope: EventEnvelope<Any, Any>) {
+        override fun envelopeCompleted(eventListener: SingleEventListener, envelope: EventEnvelope<Any, Any>) {
             if (slf4jLogger.isDebugEnabled) slf4jLogger.debug("Collected $envelope in $eventListener")
         }
-        override fun envelopeFailed(eventListener: EventListener, envelope: EventEnvelope<Any, Any>, t: Throwable, backoff: Duration) {
+        override fun envelopeFailed(eventListener: SingleEventListener, envelope: EventEnvelope<Any, Any>, t: Throwable, backoff: Duration) {
             slf4jLogger.error("Error while collecting $envelope in $eventListener, will try to restart in $backoff", t)
         }
         override fun failed(eventListener: EventListener, t: Throwable, backoff: Duration) {
@@ -63,9 +73,9 @@ public class EventListenerExecutorService(
     private val jobs = mutableMapOf<String, Job>()
 
     init {
-        val allEventListeners = singleStreamTypeEventListeners + multiStreamTypeEventListeners
-        if (allEventListeners.distinctBy { it.id }.size != allEventListeners.size) {
-            val listenersWithDuplicatedId = allEventListeners
+        val allListeners = singleEventListeners + batchEventListeners
+        if (allListeners.distinctBy { it.id }.size != allListeners.size) {
+            val listenersWithDuplicatedId = allListeners
                 .groupBy { it.id }
                 .filter { it.value.count() > 1 }
                 .mapValues { duplicatedId -> duplicatedId.value.map { it::class.simpleName } }
@@ -75,36 +85,34 @@ public class EventListenerExecutorService(
 
     private fun init() {
         slf4jLogger.info(
-            "Starting listener processes for ${singleStreamTypeEventListeners.size} single event listeners " +
-                "and ${multiStreamTypeEventListeners.size} multi event listeners...",
+            "Starting listener processes for ${singleEventListeners.size} single event listeners " +
+                "and ${batchEventListeners.size} batch event listeners...",
         )
-
-        singleStreamTypeEventListeners.forEach { listener ->
-            @Suppress("UNCHECKED_CAST")
-            jobs[listener.id] = startJob(listener as SingleStreamTypeEventListener<Any, Any>)
-        }
-        multiStreamTypeEventListeners.forEach { listener ->
-            @Suppress("UNCHECKED_CAST")
-            jobs[listener.id] = startJob(listener as MultiStreamTypeEventListener<Any, Any>)
-        }
+        singleEventListeners.forEach { jobs[it.id] = startJob(it) }
+        batchEventListeners.forEach { jobs[it.id] = startBatchJob(it) }
     }
 
-    private fun startJob(eventListener: SingleStreamTypeEventListener<Any, Any>): Job {
-        val eventStore = eventStores
-            .singleOrNull { eventListener.streamType in it.registeredTypes }
-            ?: throw IllegalStateException("$eventListener has a stream type which needs to be registered in one (and only one) event store.")
-        return startJob(eventListener, eventStore)
+    private fun startJob(eventListener: SingleEventListener): Job {
+        @Suppress("UNCHECKED_CAST")
+        val eventStore = when (eventListener) {
+            is SingleStreamTypeEventListener<*, *> ->
+                eventStores.singleOrNull { (eventListener as SingleStreamTypeEventListener<Any, Any>).streamType in it.registeredTypes }
+            is MultiStreamTypeEventListener<*, *> ->
+                eventStores.singleOrNull { es -> (eventListener as MultiStreamTypeEventListener<Any, Any>).streamTypes.all { st -> st in es.registeredTypes } }
+        } ?: throw IllegalStateException("$eventListener has a stream type which needs to be registered in one (and only one) event store.")
+        return scope.launchListener(eventListener, eventStore, bookmark, observer, template, config.errorBackoff, config.batchSize) { stopped }
     }
 
-    private fun startJob(eventListener: MultiStreamTypeEventListener<Any, Any>): Job {
-        val eventStore = eventStores
-            .singleOrNull { es -> eventListener.streamTypes.all { st -> st in es.registeredTypes } }
-            ?: throw IllegalStateException("$eventListener has a stream type which needs to be registered in one (and only one) event store.")
-        return startJob(eventListener, eventStore)
+    private fun startBatchJob(eventListener: BatchEventListener): Job {
+        @Suppress("UNCHECKED_CAST")
+        val eventStore = when (eventListener) {
+            is SingleStreamTypeBatchEventListener<*, *> ->
+                eventStores.singleOrNull { (eventListener as SingleStreamTypeBatchEventListener<Any, Any>).streamType in it.registeredTypes }
+            is MultiStreamTypeBatchEventListener<*, *> ->
+                eventStores.singleOrNull { es -> (eventListener as MultiStreamTypeBatchEventListener<Any, Any>).streamTypes.all { st -> st in es.registeredTypes } }
+        } ?: throw IllegalStateException("$eventListener has a stream type which needs to be registered in one (and only one) event store.")
+        return scope.launchBatchListener(eventListener, eventStore, bookmark, observer, template, config.errorBackoff, config.batchSize, config.writeBatchSize, config.batchTimeout) { stopped }
     }
-
-    private fun startJob(eventListener: EventListener, eventStore: EventStore): Job =
-        scope.launchListener(eventListener, eventStore, bookmark, observer, template, config.errorBackoff, config.batchSize) { stopped }
 
     private fun shutdown() {
         slf4jLogger.info("Shutting down...")
@@ -129,11 +137,10 @@ public class EventListenerExecutorService(
     }
 
     public fun startEventListener(id: String) {
-        val eventListener = (singleStreamTypeEventListeners + multiStreamTypeEventListeners).single { it.id == id }
-        @Suppress("UNCHECKED_CAST")
+        val eventListener = (singleEventListeners + batchEventListeners).single { it.id == id }
         jobs[eventListener.id] = when (eventListener) {
-            is MultiStreamTypeEventListener<*, *> -> startJob(eventListener as MultiStreamTypeEventListener<Any, Any>)
-            is SingleStreamTypeEventListener<*, *> -> startJob(eventListener as SingleStreamTypeEventListener<Any, Any>)
+            is SingleEventListener -> startJob(eventListener)
+            is BatchEventListener -> startBatchJob(eventListener)
         }
     }
 
