@@ -22,6 +22,7 @@ public fun CoroutineScope.launchListener(
     readBatchSize: Int,
     shouldStop: () -> Boolean,
 ): Job = launch {
+    val effectiveBatchSize = eventListener.listenerConfig?.readBatchSize ?: readBatchSize
     var retry = 0
     while (!shouldStop()) {
         observer.started(eventListener)
@@ -30,7 +31,7 @@ public fun CoroutineScope.launchListener(
                 .listenerEventFlow(
                     eventListener = eventListener,
                     sincePosition = bookmark.get(eventListener.id),
-                    batchSize = readBatchSize,
+                    batchSize = effectiveBatchSize,
                 )
                 .collect { envelope ->
                     try {
@@ -69,6 +70,9 @@ public fun CoroutineScope.launchBatchListener(
     batchTimeout: Duration,
     shouldStop: () -> Boolean,
 ): Job = launch {
+    val effectiveBatchSize = eventListener.listenerConfig?.readBatchSize ?: readBatchSize
+    val effectiveWriteBatchSize = eventListener.listenerConfig?.writeBatchSize ?: writeBatchSize
+    val effectiveBatchTimeout = eventListener.listenerConfig?.batchTimeout ?: batchTimeout
     var retry = 0
     while (!shouldStop()) {
         observer.started(eventListener)
@@ -77,9 +81,9 @@ public fun CoroutineScope.launchBatchListener(
                 .listenerEventFlow(
                     eventListener = eventListener,
                     sincePosition = bookmark.get(eventListener.id),
-                    batchSize = readBatchSize,
+                    batchSize = effectiveBatchSize,
                 )
-                .chunkedWithTimeout(writeBatchSize, batchTimeout)
+                .chunkedWithTimeout(effectiveWriteBatchSize, effectiveBatchTimeout)
                 .collect { envelopes ->
                     try {
                         template.execute(eventStore, eventListener) {
