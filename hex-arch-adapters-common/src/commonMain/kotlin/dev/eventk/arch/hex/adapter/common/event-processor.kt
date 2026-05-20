@@ -20,6 +20,7 @@ public fun <E, I> EventStore.singleStreamTypeEventFlow(
     sincePosition: Long,
     batchSize: Int,
 ): Flow<EventEnvelope<Any, Any>> = channelFlow {
+    @Suppress("UNCHECKED_CAST")
     val loader: (Long) -> List<EventEnvelope<Any, Any>> = { pos -> loadEventBatch(pos, batchSize, streamType as StreamType<Any, Any>) }
     produce(sincePosition, loader, batchSize)
 }
