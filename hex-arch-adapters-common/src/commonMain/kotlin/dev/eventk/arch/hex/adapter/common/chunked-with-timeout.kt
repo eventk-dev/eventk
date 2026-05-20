@@ -34,7 +34,7 @@ internal fun <T> Flow<T>.chunkedWithTimeout(size: Int, timeout: Duration): Flow<
                     currentChunk = null
                 }
             } else {
-                val value = element!! // either value in the pair is always non-null
+                @Suppress("UNCHECKED_CAST") val value = element as T // either value in the pair is always non-null
                 val chunk = currentChunk ?: ArrayList<T>(size).also {
                     currentChunk = it
                     flushJob = launch {
