@@ -87,7 +87,11 @@ class ChunkedWithTimeoutTest {
 
     @Test
     fun `given stream completes exactly on chunk boundary - when chunkedWithTimeout - then no empty trailing chunk`() = runTest {
-        val source = flow { emit(1); emit(2); emit(3) }
+        val source = flow {
+            emit(1)
+            emit(2)
+            emit(3)
+        }
 
         val result = source.chunkedWithTimeout(size = 3, timeout = 10.seconds).toList()
 

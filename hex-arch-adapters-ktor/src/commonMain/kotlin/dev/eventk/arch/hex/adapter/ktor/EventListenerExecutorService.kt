@@ -99,11 +99,27 @@ public class EventListenerExecutorService(
         @Suppress("UNCHECKED_CAST")
         val eventStore = when (eventListener) {
             is SingleStreamTypeBatchEventListener<*, *> ->
-                eventStores.singleOrNull { (eventListener as SingleStreamTypeBatchEventListener<Any, Any>).streamType in it.registeredTypes }
+                eventStores.singleOrNull {
+                    (eventListener as SingleStreamTypeBatchEventListener<Any, Any>).streamType in it.registeredTypes
+                }
             is MultiStreamTypeBatchEventListener<*, *> ->
-                eventStores.singleOrNull { es -> (eventListener as MultiStreamTypeBatchEventListener<Any, Any>).streamTypes.all { st -> st in es.registeredTypes } }
+                eventStores.singleOrNull { es ->
+                    (eventListener as MultiStreamTypeBatchEventListener<Any, Any>).streamTypes.all { st -> st in es.registeredTypes }
+                }
         } ?: throw IllegalStateException("$eventListener has a stream type which needs to be registered in one (and only one) event store.")
-        return scope.launchBatchListener(eventListener, eventStore, bookmark, observer, template, config.errorBackoff, config.batchSize, config.writeBatchSize, config.batchTimeout) { stopped }
+        return scope.launchBatchListener(
+            eventListener,
+            eventStore,
+            bookmark,
+            observer,
+            template,
+            config.errorBackoff,
+            config.batchSize,
+            config.writeBatchSize,
+            config.batchTimeout,
+        ) {
+            stopped
+        }
     }
 
     public fun shutdown() {
