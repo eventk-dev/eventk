@@ -10,8 +10,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-public fun startJob(
-    scope: CoroutineScope,
+public fun CoroutineScope.launchListener(
     eventListener: EventListener,
     eventStore: EventStore,
     bookmark: Bookmark,
@@ -19,10 +18,10 @@ public fun startJob(
     template: EventBatchTemplate,
     errorBackoff: BackoffStrategy,
     readBatchSize: Int,
-    isStopped: () -> Boolean,
-): Job = scope.launch {
+    shouldStop: () -> Boolean,
+): Job = launch {
     var retry = 0
-    while (!isStopped()) {
+    while (!shouldStop()) {
         observer.started(eventListener)
         try {
             eventStore
@@ -43,14 +42,14 @@ public fun startJob(
                         throw EnvelopeCollectionException(envelope, e)
                     }
                 }
-        } catch (e: Exception) {
+        } catch (e: RuntimeException) {
             if (e is CancellationException) throw e
             val backoff = errorBackoff.backoff(++retry)
             when (e) {
                 is EnvelopeCollectionException -> observer.envelopeFailed(eventListener, e.envelope, e.cause!!, backoff)
                 else -> observer.failed(eventListener, e, backoff)
             }
-            if (!isStopped()) delay(backoff)
+            if (!shouldStop()) delay(backoff)
         }
     }
     observer.finished(eventListener)

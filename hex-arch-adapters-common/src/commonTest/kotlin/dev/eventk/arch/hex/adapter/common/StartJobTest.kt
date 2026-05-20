@@ -55,8 +55,7 @@ class StartJobTest {
         store.withStreamType(TestStreamType).appendStream("stream-1", 0, listOf("hello"))
 
         val scope = CoroutineScope(Dispatchers.Default)
-        startJob(
-            scope,
+        scope.launchListener(
             eventListener = listener,
             eventStore = store,
             bookmark = InMemoryBookmark(),
@@ -89,8 +88,7 @@ class StartJobTest {
         store.withStreamType(TestStreamType).appendStream("stream-1", 0, listOf("hello"))
 
         val scope = CoroutineScope(Dispatchers.Default)
-        startJob(
-            scope,
+        scope.launchListener(
             eventListener = listener,
             eventStore = store,
             bookmark = InMemoryBookmark(),
@@ -101,6 +99,7 @@ class StartJobTest {
                 override fun envelopeFailed(eventListener: EventListener, envelope: EventEnvelope<Any, Any>, t: Throwable, backoff: Duration) {
                     failedEnvelopeFuture.complete(envelope)
                 }
+
                 override fun failed(eventListener: EventListener, t: Throwable, backoff: Duration) = Unit
             },
             template = EventBatchTemplate.NoOp(),
@@ -131,8 +130,7 @@ class StartJobTest {
         store.withStreamType(TestStreamType).appendStream("stream-1", 0, listOf("hello"))
 
         val scope = CoroutineScope(Dispatchers.Default)
-        startJob(
-            scope,
+        scope.launchListener(
             eventListener = listener,
             eventStore = store,
             bookmark = InMemoryBookmark(),

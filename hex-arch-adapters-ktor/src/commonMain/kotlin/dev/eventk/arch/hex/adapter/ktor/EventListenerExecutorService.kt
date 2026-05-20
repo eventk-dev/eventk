@@ -3,7 +3,7 @@ package dev.eventk.arch.hex.adapter.ktor
 import dev.eventk.arch.hex.adapter.common.EventBatchTemplate
 import dev.eventk.arch.hex.adapter.common.EventListenerExecutorConfig
 import dev.eventk.arch.hex.adapter.common.Observer
-import dev.eventk.arch.hex.adapter.common.startJob
+import dev.eventk.arch.hex.adapter.common.launchListener
 import dev.eventk.arch.hex.port.Bookmark
 import dev.eventk.arch.hex.port.EventListener
 import dev.eventk.arch.hex.port.MultiStreamTypeEventListener
@@ -94,7 +94,7 @@ public class EventListenerExecutorService(
     }
 
     private fun startJob(eventListener: EventListener, eventStore: EventStore): Job =
-        startJob(scope, eventListener, eventStore, bookmark, observer, template, config.errorBackoff, config.batchSize) { stopped }
+        scope.launchListener(eventListener, eventStore, bookmark, observer, template, config.errorBackoff, config.batchSize) { stopped }
 
     public fun shutdown() {
         infoLogger { "Shutting down..." }
