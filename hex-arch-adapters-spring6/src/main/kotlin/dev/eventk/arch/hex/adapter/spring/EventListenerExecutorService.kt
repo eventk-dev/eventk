@@ -2,28 +2,26 @@ package dev.eventk.arch.hex.adapter.spring
 
 import dev.eventk.arch.hex.adapter.common.EventBatchTemplate
 import dev.eventk.arch.hex.adapter.common.EventListenerExecutorConfig
-import dev.eventk.arch.hex.adapter.common.listen
-import dev.eventk.arch.hex.adapter.common.listenerEventFlow
+import dev.eventk.arch.hex.adapter.common.Observer
+import dev.eventk.arch.hex.adapter.common.launchListener
 import dev.eventk.arch.hex.port.Bookmark
 import dev.eventk.arch.hex.port.EventListener
 import dev.eventk.arch.hex.port.MultiStreamTypeEventListener
 import dev.eventk.arch.hex.port.SingleStreamTypeEventListener
+import dev.eventk.store.api.EventEnvelope
 import dev.eventk.store.api.blocking.EventStore
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.newFixedThreadPoolContext
-import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.DisposableBean
 import org.springframework.beans.factory.InitializingBean
 import org.springframework.stereotype.Component
 import kotlin.IllegalArgumentException
+import kotlin.time.Duration
 
 @Component
 public class EventListenerExecutorService(
@@ -34,7 +32,26 @@ public class EventListenerExecutorService(
     private val config: EventListenerExecutorConfig = EventListenerExecutorConfig(),
     private val template: EventBatchTemplate = EventBatchTemplate.NoOp(),
 ) : InitializingBean, DisposableBean {
-    private val logger: Logger = LoggerFactory.getLogger(EventListenerExecutorService::class.java)
+    private val slf4jLogger = LoggerFactory.getLogger(EventListenerExecutorService::class.java)
+    private val observer = object : Observer {
+        override fun started(eventListener: EventListener) {
+            if (slf4jLogger.isInfoEnabled) slf4jLogger.info("Starting collection of events for $eventListener")
+        }
+
+        override fun finished(eventListener: EventListener) {
+            if (slf4jLogger.isInfoEnabled) slf4jLogger.info("Finished collection of events for $eventListener")
+        }
+
+        override fun envelopeCompleted(eventListener: EventListener, envelope: EventEnvelope<Any, Any>) {
+            if (slf4jLogger.isDebugEnabled) slf4jLogger.debug("Collected $envelope in $eventListener")
+        }
+        override fun envelopeFailed(eventListener: EventListener, envelope: EventEnvelope<Any, Any>, t: Throwable, backoff: Duration) {
+            slf4jLogger.error("Error while collecting $envelope in $eventListener, will try to restart in $backoff", t)
+        }
+        override fun failed(eventListener: EventListener, t: Throwable, backoff: Duration) {
+            slf4jLogger.error("Error while collecting flow in $eventListener, will try to restart in $backoff", t)
+        }
+    }
 
     @OptIn(DelicateCoroutinesApi::class)
     private val dispatcher = newFixedThreadPoolContext(config.threadPoolSize, config.threadPoolName)
@@ -57,7 +74,7 @@ public class EventListenerExecutorService(
     }
 
     private fun init() {
-        logger.info(
+        slf4jLogger.info(
             "Starting listener processes for ${singleStreamTypeEventListeners.size} single event listeners " +
                 "and ${multiStreamTypeEventListeners.size} multi event listeners...",
         )
@@ -86,38 +103,11 @@ public class EventListenerExecutorService(
         return startJob(eventListener, eventStore)
     }
 
-    private fun startJob(eventListener: EventListener, eventStore: EventStore): Job {
-        return scope.launch {
-            var retry = 0
-            while (!stopped) {
-                logger.info("Starting collection of events for $eventListener")
-                try {
-                    eventStore
-                        .listenerEventFlow(
-                            eventListener = eventListener,
-                            sincePosition = bookmark.get(eventListener.id),
-                            batchSize = config.batchSize,
-                        )
-                        .collect { envelope ->
-                            template.execute(eventStore, eventListener) {
-                                eventListener.listen(envelope)
-                                bookmark.set(eventListener.id, envelope.position)
-                            }
-                            if (retry > 0) retry = 0
-                            logger.debug("Processed event position {} of type {} in {}", envelope.position, envelope.event::class.qualifiedName, eventListener)
-                        }
-                } catch (e: Exception) {
-                    if (e is CancellationException) throw e
-                    val backoff = config.errorBackoff.backoff(++retry)
-                    logger.error("Error while collecting events in $eventListener, will try to restart in $backoff", e)
-                    if (!stopped) delay(backoff)
-                }
-            }
-        }
-    }
+    private fun startJob(eventListener: EventListener, eventStore: EventStore): Job =
+        scope.launchListener(eventListener, eventStore, bookmark, observer, template, config.errorBackoff, config.batchSize) { stopped }
 
     private fun shutdown() {
-        logger.info("Shutting down...")
+        slf4jLogger.info("Shutting down...")
         stopped = true
         supervisor.cancel("Shutting down")
         dispatcher.close()
