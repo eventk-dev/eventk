@@ -5,7 +5,7 @@ plugins {
 group = "dev.eventk"
 
 kotlin {
-    setupPlatforms(ios = false)
+    setupPlatforms(ios = false, node = false)
 
     sourceSets {
         commonMain {
