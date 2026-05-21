@@ -1,7 +1,10 @@
 package dev.eventk.arch.hex.adapter.common
 
-import dev.eventk.arch.hex.port.EventListener
+import dev.eventk.arch.hex.port.BatchEventListener
+import dev.eventk.arch.hex.port.MultiStreamTypeBatchEventListener
 import dev.eventk.arch.hex.port.MultiStreamTypeEventListener
+import dev.eventk.arch.hex.port.SingleEventListener
+import dev.eventk.arch.hex.port.SingleStreamTypeBatchEventListener
 import dev.eventk.arch.hex.port.SingleStreamTypeEventListener
 import dev.eventk.store.api.EventEnvelope
 import dev.eventk.store.api.StreamType
@@ -17,6 +20,7 @@ public fun <E, I> EventStore.singleStreamTypeEventFlow(
     sincePosition: Long,
     batchSize: Int,
 ): Flow<EventEnvelope<Any, Any>> = channelFlow {
+    @Suppress("UNCHECKED_CAST")
     val loader: (Long) -> List<EventEnvelope<Any, Any>> = { pos -> loadEventBatch(pos, batchSize, streamType as StreamType<Any, Any>) }
     produce(sincePosition, loader, batchSize)
 }
@@ -30,7 +34,7 @@ public fun EventStore.multiStreamTypeEventFlow(
 }
 
 public fun EventStore.listenerEventFlow(
-    eventListener: EventListener,
+    eventListener: SingleEventListener,
     sincePosition: Long,
     batchSize: Int,
 ): Flow<EventEnvelope<Any, Any>> = channelFlow {
@@ -38,6 +42,19 @@ public fun EventStore.listenerEventFlow(
     val loader: (Long) -> List<EventEnvelope<Any, Any>> = when (eventListener) {
         is SingleStreamTypeEventListener<*, *> -> { pos -> loadEventBatch(pos, batchSize, eventListener.streamType as StreamType<Any, Any>) }
         is MultiStreamTypeEventListener<*, *> -> { pos -> loadEventBatch(pos, batchSize) }
+    }
+    produce(sincePosition, loader, batchSize)
+}
+
+public fun EventStore.listenerEventFlow(
+    eventListener: BatchEventListener,
+    sincePosition: Long,
+    batchSize: Int,
+): Flow<EventEnvelope<Any, Any>> = channelFlow {
+    @Suppress("UNCHECKED_CAST")
+    val loader: (Long) -> List<EventEnvelope<Any, Any>> = when (eventListener) {
+        is SingleStreamTypeBatchEventListener<*, *> -> { pos -> loadEventBatch(pos, batchSize, eventListener.streamType as StreamType<Any, Any>) }
+        is MultiStreamTypeBatchEventListener<*, *> -> { pos -> loadEventBatch(pos, batchSize) }
     }
     produce(sincePosition, loader, batchSize)
 }
@@ -60,7 +77,13 @@ private suspend fun ProducerScope<EventEnvelope<Any, Any>>.produce(
 }
 
 @Suppress("UNCHECKED_CAST")
-public fun EventListener.listen(envelope: EventEnvelope<Any, Any>): Unit = when (this) {
+public fun SingleEventListener.listen(envelope: EventEnvelope<Any, Any>): Unit = when (this) {
     is SingleStreamTypeEventListener<*, *> -> (this as SingleStreamTypeEventListener<Any, Any>).listen(envelope)
     is MultiStreamTypeEventListener<*, *> -> (this as MultiStreamTypeEventListener<Any, Any>).listen(envelope)
+}
+
+@Suppress("UNCHECKED_CAST")
+public fun BatchEventListener.listenBatch(envelopes: List<EventEnvelope<Any, Any>>): Unit = when (this) {
+    is SingleStreamTypeBatchEventListener<*, *> -> (this as SingleStreamTypeBatchEventListener<Any, Any>).listen(envelopes)
+    is MultiStreamTypeBatchEventListener<*, *> -> (this as MultiStreamTypeBatchEventListener<Any, Any>).listen(envelopes)
 }
