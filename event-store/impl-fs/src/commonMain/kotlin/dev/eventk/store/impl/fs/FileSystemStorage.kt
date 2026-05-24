@@ -1,5 +1,6 @@
 package dev.eventk.store.impl.fs
 
+import dev.eventk.store.api.AppendResult
 import dev.eventk.store.api.EventEnvelope
 import dev.eventk.store.api.EventMetadata
 import dev.eventk.store.api.Serializer
@@ -181,6 +182,117 @@ public class FileSystemStorage internal constructor(
         if (thrown != null) throw thrown
         @Suppress("UNCHECKED_CAST")
         return result as R
+    }
+
+    override fun <E, I, R> useStreamAndAppend(
+        streamType: StreamType<E, I>,
+        streamId: I,
+        sinceVersion: Int,
+        consume: (List<EventEnvelope<E, I>>) -> AppendResult<E>,
+        finalize: (loaded: List<EventEnvelope<E, I>>, appended: List<EventEnvelope<E, I>>) -> R,
+    ): R {
+        if (streamType.id !in registeredTypes) throwIfNotRegistered(streamType.id)
+        val streamPath = basePath / toPathComponent(streamId, streamType.stringIdSerializer)
+        fs.createDirectories(streamPath.parent!!)
+        initStorage()
+        if (!fs.exists(streamPath)) {
+            fs.sink(streamPath).buffer().use { }
+        }
+
+        return writeLock.withLock {
+            useHandles(fs.openReadWrite(dataPath), fs.openReadWrite(posPath), fs.openReadWrite(streamPath)) { dataHandleRw, posHandleRw, streamHandleRw ->
+                val currentVersion = (streamHandleRw.size() / STREAM_ENTRY_SIZE_IN_BYTES).toInt()
+
+                val loaded: List<EventEnvelope<E, I>> = if (sinceVersion >= currentVersion) {
+                    emptyList()
+                } else {
+                    buildList {
+                        streamHandleRw.source(sinceVersion * STREAM_ENTRY_SIZE_IN_BYTES).buffer().use { streamSource ->
+                            var read = 0
+                            while (!streamSource.exhausted()) {
+                                val addr = streamSource.readLong()
+                                read++
+                                val envelope = try {
+                                    dataHandleRw.readEventEnvelopeAt<E, I>(addr, streamTypeFinder = { id -> registeredTypes[id].asTyped() })
+                                } catch (e: okio.IOException) {
+                                    val message = "Error reading data file at address $addr, pointer from stream $streamId version ${sinceVersion + read}."
+                                    throw CorruptedDataException(message, e)
+                                }
+                                add(envelope)
+                            }
+                        }
+                    }
+                }
+
+                val appendResult = consume(loaded)
+
+                val appendedEnvelopes = if (appendResult.events.isEmpty()) {
+                    emptyList()
+                } else {
+                    val metadataPayload = eventMetadataSerializer.serialize(appendResult.metadata)
+                    val dataEntries = appendResult.events.mapIndexed { index, event ->
+                        val eventPayload = streamType.binaryEventSerializer.serialize(event)
+                        val dataFileEntry = DataFileEntry(
+                            type = streamType.id,
+                            id = streamType.stringIdSerializer.serialize(streamId),
+                            version = currentVersion + index + 1,
+                            eventPayload = eventPayload,
+                            metadataPayload = metadataPayload,
+                        )
+                        dataFileEntryFormat.encodeToByteArray(DataFileEntry.serializer(), dataFileEntry)
+                    }
+
+                    val dataAddressFirstAppend = dataHandleRw.size()
+                    val positionFirstAppend = 1L + if (dataAddressFirstAppend > 0) {
+                        dataHandleRw.source(dataAddressFirstAppend - Long.SIZE_BYTES).use { s ->
+                            s.buffer().use { it.readLong() }
+                        }
+                    } else {
+                        0L
+                    }
+
+                    val dataAddresses = dataHandleRw.appendingSink().buffer().use { dataBuffer ->
+                        var appended = 0L
+                        dataEntries.mapIndexed { index, dataEntryBytes ->
+                            val addr = dataAddressFirstAppend + appended
+
+                            dataBuffer.writeInt(dataEntryBytes.size)
+                            dataBuffer.write(dataEntryBytes)
+                            dataBuffer.writeInt(dataEntryBytes.size)
+                            dataBuffer.writeLong(positionFirstAppend + index)
+                            appended += 4L + dataEntryBytes.size + 4L + STREAM_ENTRY_SIZE_IN_BYTES
+
+                            addr
+                        }
+                    }
+
+                    posHandleRw.appendingSink().buffer().use { posBuffer ->
+                        dataAddresses.forEach { dataAddress ->
+                            posBuffer.writeLong(dataAddress)
+                        }
+                    }
+
+                    streamHandleRw.appendingSink().buffer().use { streamBuffer ->
+                        dataAddresses.forEach { dataAddress ->
+                            streamBuffer.writeLong(dataAddress)
+                        }
+                    }
+
+                    appendResult.events.mapIndexed { index, event ->
+                        EventEnvelope(
+                            streamType = streamType,
+                            streamId = streamId,
+                            version = currentVersion + index + 1,
+                            position = positionFirstAppend + index,
+                            metadata = appendResult.metadata,
+                            event = event,
+                        )
+                    }
+                }
+
+                finalize(loaded, appendedEnvelopes)
+            }
+        }
     }
 
     override fun <E, I, R> useStreamEvents(

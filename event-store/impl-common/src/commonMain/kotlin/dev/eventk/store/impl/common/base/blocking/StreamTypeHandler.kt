@@ -1,5 +1,6 @@
 package dev.eventk.store.impl.common.base.blocking
 
+import dev.eventk.store.api.AppendResult
 import dev.eventk.store.api.EventEnvelope
 import dev.eventk.store.api.EventMetadata
 import dev.eventk.store.api.StreamType
@@ -28,5 +29,18 @@ public class StreamTypeHandler<E, I>(
             throw StreamVersionMismatchException(e.currentVersion, e.expectedVersion)
         }
         return expectedVersion + events.size
+    }
+
+    override fun <R> loadAndAppendStream(
+        streamId: I,
+        sinceVersion: Int,
+        consume: (List<EventEnvelope<E, I>>) -> AppendResult<E>,
+        finalize: (loaded: List<EventEnvelope<E, I>>, appended: List<EventEnvelope<E, I>>) -> R,
+    ): R {
+        try {
+            return storage.useStreamAndAppend(streamType, streamId, sinceVersion, consume, finalize)
+        } catch (e: StorageVersionMismatchException) {
+            throw StreamVersionMismatchException(e.currentVersion, e.expectedVersion)
+        }
     }
 }

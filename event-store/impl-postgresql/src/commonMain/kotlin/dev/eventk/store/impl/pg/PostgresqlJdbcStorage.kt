@@ -1,5 +1,6 @@
 package dev.eventk.store.impl.pg
 
+import dev.eventk.store.api.AppendResult
 import dev.eventk.store.api.EventEnvelope
 import dev.eventk.store.api.EventMetadata
 import dev.eventk.store.api.Serializer
@@ -44,6 +45,41 @@ internal class PostgresqlJdbcStorage(
         ) { entries ->
             consume(entries.map { it.toEventEnvelope() })
         }
+    }
+
+    override fun <E, I, R> useStreamAndAppend(
+        streamType: StreamType<E, I>,
+        streamId: I,
+        sinceVersion: Int,
+        consume: (List<EventEnvelope<E, I>>) -> AppendResult<E>,
+        finalize: (loaded: List<EventEnvelope<E, I>>, appended: List<EventEnvelope<E, I>>) -> R,
+    ): R {
+        if (streamType.id !in registeredTypes) throw IllegalStateException("Unregistered type: $streamType")
+        val serializedId = streamType.stringIdSerializer.serialize(streamId)
+        var loaded: List<EventEnvelope<E, I>> = emptyList()
+
+        return databaseAdapter.useEntriesAndPersist(
+            streamId = serializedId,
+            sinceVersion = sinceVersion,
+            tableInfo = config.tableInfo,
+            consume = { entries ->
+                loaded = entries.map { it.toEventEnvelope<E, I>() }.toList()
+                val appendResult = consume(loaded)
+                val currentVersion = sinceVersion + loaded.size
+                appendResult.events.mapIndexed { index, event ->
+                    DatabaseEntry(
+                        type = streamType.id,
+                        id = serializedId,
+                        version = currentVersion + index + 1,
+                        eventPayload = streamType.stringEventSerializer.serialize(event),
+                        metadataPayload = eventMetadataSerializer.serialize(appendResult.metadata),
+                    )
+                }
+            },
+            finalize = { appendedEntries ->
+                finalize(loaded, appendedEntries.map { it.toEventEnvelope() })
+            },
+        )
     }
 
     override fun <E, I> loadEventBatch(sincePosition: Long, batchSize: Int): List<EventEnvelope<E, I>> {

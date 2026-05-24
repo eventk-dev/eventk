@@ -1,5 +1,6 @@
 package dev.eventk.store.impl.memory
 
+import dev.eventk.store.api.AppendResult
 import dev.eventk.store.api.EventEnvelope
 import dev.eventk.store.api.EventMetadata
 import dev.eventk.store.api.StreamType
@@ -51,21 +52,53 @@ internal class SynchronizedInMemoryStorage(
             if (streamEvents.size != expectedVersion) {
                 throw StorageVersionMismatchException(currentVersion = streamEvents.size, expectedVersion = expectedVersion)
             }
-            val envelopes = events.mapIndexed { index, event ->
-                val position = this.events.size + index + 1L
-                val version = expectedVersion + index + 1
-
-                EventEnvelope(
-                    streamType = streamType as StreamType<Any, Any>,
-                    streamId = streamId as Any,
-                    version = version,
-                    position = position,
-                    metadata = metadata,
-                    event = event as Any,
-                )
-            }
+            val envelopes = buildEnvelopes(streamType, streamId, expectedVersion, events, metadata)
             streamEvents += envelopes
             this.events += envelopes
+        }
+    }
+
+    override fun <E, I, R> useStreamAndAppend(
+        streamType: StreamType<E, I>,
+        streamId: I,
+        sinceVersion: Int,
+        consume: (List<EventEnvelope<E, I>>) -> AppendResult<E>,
+        finalize: (loaded: List<EventEnvelope<E, I>>, appended: List<EventEnvelope<E, I>>) -> R,
+    ): R {
+        if (streamType.id !in registeredTypes) throw IllegalStateException("Unregistered type: $streamType")
+        return writeLock.withLock {
+            val streamEvents = eventsByStreamId[streamId as Any]
+                ?: mutableListOf<EventEnvelope<Any, Any>>().also { value -> eventsByStreamId[streamId as Any] = value }
+            val loaded = streamEvents.drop(sinceVersion) as List<EventEnvelope<E, I>>
+            val appendResult = consume(loaded)
+            val envelopes = buildEnvelopes(streamType, streamId, streamEvents.size, appendResult.events, appendResult.metadata)
+            if (envelopes.isNotEmpty()) {
+                streamEvents += envelopes
+                this.events += envelopes
+            }
+            finalize(loaded, envelopes as List<EventEnvelope<E, I>>)
+        }
+    }
+
+    private fun <E, I> buildEnvelopes(
+        streamType: StreamType<E, I>,
+        streamId: I,
+        expectedVersion: Int,
+        events: List<E>,
+        metadata: EventMetadata,
+    ): List<EventEnvelope<Any, Any>> {
+        return events.mapIndexed { index, event ->
+            val position = this.events.size + index + 1L
+            val version = expectedVersion + index + 1
+
+            EventEnvelope(
+                streamType = streamType as StreamType<Any, Any>,
+                streamId = streamId as Any,
+                version = version,
+                position = position,
+                metadata = metadata,
+                event = event as Any,
+            )
         }
     }
 

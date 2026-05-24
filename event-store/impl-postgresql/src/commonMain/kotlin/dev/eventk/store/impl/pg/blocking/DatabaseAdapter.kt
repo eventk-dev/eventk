@@ -30,4 +30,12 @@ internal interface DatabaseAdapter {
         entries: List<DatabaseEntry>,
         tableInfo: TableInfo,
     )
+
+    fun <R> useEntriesAndPersist(
+        streamId: String,
+        sinceVersion: Int,
+        tableInfo: TableInfo,
+        consume: (entries: Sequence<DatabaseEntry>) -> List<DatabaseEntry>,
+        finalize: (appended: List<DatabaseEntry>) -> R,
+    ): R
 }

@@ -3,6 +3,7 @@ package dev.eventk.store.impl.pg
 import dev.eventk.store.storage.api.StorageVersionMismatchException
 import org.postgresql.util.PSQLState
 import java.sql.ResultSet
+import java.sql.Statement
 import javax.sql.DataSource
 
 internal class JdbcDatabaseAdapter(
@@ -95,6 +96,74 @@ internal class JdbcDatabaseAdapter(
             eventPayload = getString("payload"),
             metadataPayload = getString("metadata"),
         )
+    }
+
+    override fun <R> useEntriesAndPersist(
+        streamId: String,
+        sinceVersion: Int,
+        tableInfo: TableInfo,
+        consume: (entries: Sequence<DatabaseEntry>) -> List<DatabaseEntry>,
+        finalize: (appended: List<DatabaseEntry>) -> R,
+    ): R {
+        dataSource.connection.use { connection ->
+            connection.autoCommit = false
+            try {
+                connection.prepareStatement("select pg_advisory_xact_lock(hashtextextended(?, 0))").use { ps ->
+                    ps.setString(1, streamId)
+                    ps.execute()
+                }
+
+                val entriesToPersist = connection.prepareStatement(selectEventByStreamIdAndVersionSql(tableInfo)).use { ps ->
+                    ps.setObject(1, streamId, java.sql.Types.OTHER)
+                    ps.setInt(2, sinceVersion)
+                    ps.setInt(3, Int.MAX_VALUE)
+                    ps.executeQuery().use { rs ->
+                        val sequence = sequence {
+                            while (rs.next()) {
+                                yield(rs.databaseEntry())
+                            }
+                        }
+                        consume(sequence)
+                    }
+                }
+
+                val appended = if (entriesToPersist.isEmpty()) {
+                    emptyList()
+                } else {
+                    connection.prepareStatement(insertEventSql(tableInfo), Statement.RETURN_GENERATED_KEYS).use { ps ->
+                        entriesToPersist.forEach { entry ->
+                            ps.setObject(1, entry.type, java.sql.Types.OTHER)
+                            ps.setObject(2, entry.id, java.sql.Types.OTHER)
+                            ps.setInt(3, entry.version)
+                            ps.setObject(4, entry.eventPayload, java.sql.Types.OTHER)
+                            ps.setObject(5, entry.metadataPayload, java.sql.Types.OTHER)
+                            ps.addBatch()
+                        }
+                        ps.executeBatch()
+
+                        val positions = ps.generatedKeys.use { gk ->
+                            buildList {
+                                while (gk.next()) {
+                                    add(gk.getLong("position"))
+                                }
+                            }
+                        }
+                        entriesToPersist.mapIndexed { i, entry -> entry.copy(position = positions[i]) }
+                    }
+                }
+
+                val result = finalize(appended)
+                connection.commit()
+                return result
+            } catch (t: Throwable) {
+                try {
+                    connection.rollback()
+                } catch (rollbackError: Throwable) {
+                    t.addSuppressed(rollbackError)
+                }
+                throw t
+            }
+        }
     }
 
     override fun persistEntries(streamId: String, expectedVersion: Int, entries: List<DatabaseEntry>, tableInfo: TableInfo) {
