@@ -55,6 +55,63 @@ dependencies {
 }
 ```
 
+#### Usage
+
+Once you have an `EventStore` instance, use `withStreamType` to get a `StreamTypeHandler` scoped to a specific stream type.
+
+##### `loadStream` / `useStream`
+
+Load all events for a stream (eagerly or lazily):
+
+```kotlin
+// Eagerly loads all events into a list
+val events = eventStore.withStreamType(CarStreamType).loadStream(car1StreamId)
+
+// Streams events lazily — resources are released when the block returns
+val result = eventStore.withStreamType(CarStreamType).useStream(car1StreamId) { envelopes ->
+    envelopes.fold(Car()) { car, envelope -> car + envelope.event }
+}
+```
+
+Both methods accept an optional `sinceVersion` parameter to load only events after a known version, which is useful when combined with a local cache.
+
+##### `appendStream`
+
+Append new events to a stream with optimistic concurrency control:
+
+```kotlin
+val car = events.fold(Car()) { c, e -> c + e.event }
+val result = car.handle(CarCommand())
+val newVersion = eventStore.withStreamType(CarStreamType)
+    .appendStream(car1StreamId, expectedVersion = events.last().version, events = result)
+```
+
+Throws `StreamVersionMismatchException` if the stream has been modified since `expectedVersion` was read, allowing callers to retry with a fresh load.
+
+##### `loadStreamForAppend`
+
+Loads and appends atomically under a per-stream mutex, providing pessimistic concurrency control. If all writers use `loadStreamForAppend`, `StreamVersionMismatchException` cannot occur — at the cost of higher contention and lower write throughput.
+
+The method receives the loaded events and an `appendStream` function that can be called at most once inside the block to write new events. The block's return value is propagated back to the caller, making it convenient to return an updated cache state.
+
+Because the lock is held for the duration of the block, the method is designed to be cache-friendly: use `sinceVersion` to load only events not already in your cache, and return the new cache value from the block so it can be applied after the transaction commits:
+
+```kotlin
+var cache = eventStore.withStreamType(CarStreamType).loadStream(car1StreamId)
+
+val newCacheValue = eventStore
+    .withStreamType(CarStreamType)
+    .loadStreamForAppend(car1StreamId, sinceVersion = cache.last().version) { loaded, appendStream ->
+        val car = (cache + loaded).fold(Car()) { c, e -> c + e.event }
+        val result = car.handle(CarCommand())
+        // appendStream returns the newly appended envelopes with assigned versions
+        cache + loaded + appendStream(result, emptyMap())
+    }
+
+// Cache is updated only after loadStreamForAppend returns (lock released, transaction committed)
+cache = newCacheValue
+```
+
 ### Hexagonal Architecture Helpers
 
 Besides the core event store, we also provide some helpers to make working with hexagonal architecture easier.
