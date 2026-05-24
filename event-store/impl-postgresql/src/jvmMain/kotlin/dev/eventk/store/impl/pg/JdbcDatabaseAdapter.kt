@@ -1,7 +1,10 @@
 package dev.eventk.store.impl.pg
 
 import dev.eventk.store.storage.api.StorageVersionMismatchException
+import org.postgresql.util.PSQLException
 import org.postgresql.util.PSQLState
+import java.sql.BatchUpdateException
+import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.Statement
 import javax.sql.DataSource
@@ -98,12 +101,11 @@ internal class JdbcDatabaseAdapter(
         )
     }
 
-    override fun <R> useEntriesAndPersist(
+    override fun <R> useEntriesByStreamIdAndVersionWithLock(
         streamId: String,
         sinceVersion: Int,
         tableInfo: TableInfo,
-        consume: (entries: Sequence<DatabaseEntry>) -> List<DatabaseEntry>,
-        finalize: (appended: List<DatabaseEntry>) -> R,
+        block: (loaded: Sequence<DatabaseEntry>, persist: (entries: List<DatabaseEntry>, expectedVersion: Int) -> List<DatabaseEntry>) -> R,
     ): R {
         dataSource.connection.use { connection ->
             connection.autoCommit = false
@@ -113,7 +115,34 @@ internal class JdbcDatabaseAdapter(
                     ps.execute()
                 }
 
-                val entriesToPersist = connection.prepareStatement(selectEventByStreamIdAndVersionSql(tableInfo)).use { ps ->
+                val persist: (List<DatabaseEntry>, expectedVersion: Int) -> List<DatabaseEntry> = { entries, expectedVersion ->
+                    if (entries.isEmpty()) {
+                        emptyList()
+                    } else {
+                        connection.prepareStatement(insertEventSql(tableInfo), Statement.RETURN_GENERATED_KEYS).use { ps ->
+                            entries.forEach { entry ->
+                                ps.setObject(1, entry.type, java.sql.Types.OTHER)
+                                ps.setObject(2, entry.id, java.sql.Types.OTHER)
+                                ps.setInt(3, entry.version)
+                                ps.setObject(4, entry.eventPayload, java.sql.Types.OTHER)
+                                ps.setObject(5, entry.metadataPayload, java.sql.Types.OTHER)
+                                ps.addBatch()
+                            }
+                            ps.executeBatchWithExceptionHandling(expectedVersion)
+
+                            val positions = ps.generatedKeys.use { gk ->
+                                buildList {
+                                    while (gk.next()) {
+                                        add(gk.getLong("position"))
+                                    }
+                                }
+                            }
+                            entries.mapIndexed { i, entry -> entry.copy(position = positions[i]) }
+                        }
+                    }
+                }
+
+                val result = connection.prepareStatement(selectEventByStreamIdAndVersionSql(tableInfo)).use { ps ->
                     ps.setObject(1, streamId, java.sql.Types.OTHER)
                     ps.setInt(2, sinceVersion)
                     ps.setInt(3, Int.MAX_VALUE)
@@ -123,36 +152,9 @@ internal class JdbcDatabaseAdapter(
                                 yield(rs.databaseEntry())
                             }
                         }
-                        consume(sequence)
+                        block(sequence, persist)
                     }
                 }
-
-                val appended = if (entriesToPersist.isEmpty()) {
-                    emptyList()
-                } else {
-                    connection.prepareStatement(insertEventSql(tableInfo), Statement.RETURN_GENERATED_KEYS).use { ps ->
-                        entriesToPersist.forEach { entry ->
-                            ps.setObject(1, entry.type, java.sql.Types.OTHER)
-                            ps.setObject(2, entry.id, java.sql.Types.OTHER)
-                            ps.setInt(3, entry.version)
-                            ps.setObject(4, entry.eventPayload, java.sql.Types.OTHER)
-                            ps.setObject(5, entry.metadataPayload, java.sql.Types.OTHER)
-                            ps.addBatch()
-                        }
-                        ps.executeBatch()
-
-                        val positions = ps.generatedKeys.use { gk ->
-                            buildList {
-                                while (gk.next()) {
-                                    add(gk.getLong("position"))
-                                }
-                            }
-                        }
-                        entriesToPersist.mapIndexed { i, entry -> entry.copy(position = positions[i]) }
-                    }
-                }
-
-                val result = finalize(appended)
                 connection.commit()
                 return result
             } catch (t: Throwable) {
@@ -193,30 +195,32 @@ internal class JdbcDatabaseAdapter(
                     ps.setObject(5, entry.metadataPayload, java.sql.Types.OTHER)
                     ps.addBatch()
                 }
-                try {
-                    ps.executeBatch()
-                } catch (e: java.sql.BatchUpdateException) {
-                    when (val cause = e.cause) {
-                        is org.postgresql.util.PSQLException -> {
-                            if (cause.sqlState == PSQLState.UNIQUE_VIOLATION.state) {
-                                cause.serverErrorMessage
-                                    ?.let {
-                                        throw StorageVersionMismatchException(
-                                            // if expectedVersion already exists, assuming it's at least 1 version ahead
-                                            expectedVersion + 1,
-                                            expectedVersion,
-                                        )
-                                    }
-                                    ?: throw e
-                            } else {
-                                throw e
-                            }
-                        }
+                ps.executeBatchWithExceptionHandling(expectedVersion)
+            }
+        }
+    }
 
-                        else -> throw e
-                    }
+    private fun PreparedStatement.executeBatchWithExceptionHandling(expectedVersion: Int): IntArray? = try {
+        this.executeBatch()
+    } catch (e: BatchUpdateException) {
+        when (val cause = e.cause) {
+            is PSQLException -> {
+                if (cause.sqlState == PSQLState.UNIQUE_VIOLATION.state) {
+                    cause.serverErrorMessage
+                        ?.let {
+                            throw StorageVersionMismatchException(
+                                // if expectedVersion already exists, assuming it's at least 1 version ahead
+                                expectedVersion + 1,
+                                expectedVersion,
+                            )
+                        }
+                        ?: throw e
+                } else {
+                    throw e
                 }
             }
+
+            else -> throw e
         }
     }
 }

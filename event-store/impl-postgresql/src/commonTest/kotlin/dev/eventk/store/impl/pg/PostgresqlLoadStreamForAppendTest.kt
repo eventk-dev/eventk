@@ -1,10 +1,10 @@
 package dev.eventk.store.impl.pg
 
-import dev.eventk.store.test.LoadAndAppendStreamTest
+import dev.eventk.store.test.LoadStreamForAppendTest
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 
-internal class PostgresqlLoadAndAppendStreamTest : LoadAndAppendStreamTest<PostgresqlJdbcStorage, PostgresqlJdbcEventStore, PostgresqlStreamTestFactory>(
+internal class PostgresqlLoadStreamForAppendTest : LoadStreamForAppendTest<PostgresqlJdbcStorage, PostgresqlJdbcEventStore, PostgresqlStreamTestFactory>(
     PostgresqlStreamTestFactory(),
 ) {
     @BeforeTest

@@ -1,6 +1,5 @@
 package dev.eventk.store.test
 
-import dev.eventk.store.api.AppendResult
 import dev.eventk.store.api.EventEnvelope
 import dev.eventk.store.api.blocking.EventStore
 import dev.eventk.store.storage.api.blocking.Storage
@@ -15,12 +14,12 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 @Suppress("DuplicatedCode")
-public open class LoadAndAppendStreamTest<R : Storage, S : EventStore, F : StreamTestFactory<R, S>>(
+public open class LoadStreamForAppendTest<R : Storage, S : EventStore, F : StreamTestFactory<R, S>>(
     protected val factory: F,
 ) {
     @Test
     @JsName("test1")
-    public fun `given empty stream - consume appends events - events are persisted`() {
+    public fun `given empty stream - appendStream writes events`() {
         // given
         val storage = factory.newStorage()
         val eventStore = factory.newEventStore(storage)
@@ -28,23 +27,21 @@ public open class LoadAndAppendStreamTest<R : Storage, S : EventStore, F : Strea
         val metadata = mapOf("m1" to "x")
 
         // when
-        val all = eventStore
+        val appended = eventStore
             .withStreamType(CarStreamType)
-            .loadAndAppendStream(
-                streamId = car1StreamId,
-                consume = { _ -> AppendResult(listOf<CarEvent>(event1), metadata) },
-                finalize = { loaded, appended -> loaded + appended },
-            )
+            .loadStreamForAppend(car1StreamId) { _, appendStream ->
+                appendStream(listOf<CarEvent>(event1), metadata)
+            }
 
         // then
         val expected = EventEnvelope(CarStreamType, car1StreamId, 1, 1, metadata, event1)
-        assertEquals(listOf(expected), all)
+        assertEquals(listOf(expected), appended)
         assertEquals(expected, storage.getEventByStreamVersion(CarStreamType, car1StreamId, 1))
     }
 
     @Test
     @JsName("test2")
-    public fun `given existing events - consume reads then appends - loaded reflects iterated events`() {
+    public fun `given existing events - block reads loaded then appends`() {
         // given
         val storage = factory.newStorage()
         val produced = CarProducedEvent(vin = "123", producer = 1, make = "kia", model = "rio")
@@ -55,14 +52,10 @@ public open class LoadAndAppendStreamTest<R : Storage, S : EventStore, F : Strea
         // when
         val all = eventStore
             .withStreamType(CarStreamType)
-            .loadAndAppendStream(
-                streamId = car1StreamId,
-                consume = { events ->
-                    assertEquals(1, events.size)
-                    AppendResult(listOf<CarEvent>(sold))
-                },
-                finalize = { loaded, appended -> loaded + appended },
-            )
+            .loadStreamForAppend(car1StreamId) { loaded, appendStream ->
+                assertEquals(1, loaded.size)
+                loaded + appendStream(listOf<CarEvent>(sold), emptyMap())
+            }
 
         // then
         assertEquals(2, all.size)
@@ -74,42 +67,40 @@ public open class LoadAndAppendStreamTest<R : Storage, S : EventStore, F : Strea
 
     @Test
     @JsName("test3")
-    public fun `given empty stream - consume returns no events - nothing is persisted`() {
+    public fun `given empty stream - block returns without calling appendStream - nothing is persisted`() {
         // given
         val storage = factory.newStorage()
         val eventStore = factory.newEventStore(storage)
 
         // when
-        val all = eventStore
+        eventStore
             .withStreamType(CarStreamType)
-            .loadAndAppendStream(
-                streamId = car1StreamId,
-                consume = { _ -> AppendResult(emptyList()) },
-                finalize = { loaded, appended -> loaded + appended },
-            )
+            .loadStreamForAppend(car1StreamId) { loaded, _ ->
+                assertEquals(0, loaded.size)
+            }
 
         // then
-        assertEquals(emptyList(), all)
         assertEquals(0, storage.useStreamEvents(CarStreamType, car1StreamId, 0) { it.toList() }.size)
     }
 
     @Test
     @JsName("test4")
-    public fun `given consume throws - nothing is persisted`() {
+    public fun `given block throws after appending - nothing is persisted`() {
         // given
         val storage = factory.newStorage()
         val produced = CarProducedEvent(vin = "123", producer = 1, make = "kia", model = "rio")
         storage.add(CarStreamType, car1StreamId, 1, produced)
         val eventStore = factory.newEventStore(storage)
+        val sold = CarSoldEvent(seller = 1, buyer = 2, price = 100.0f)
 
         // when
         assertFailsWith<IllegalStateException> {
             eventStore
                 .withStreamType(CarStreamType)
-                .loadAndAppendStream(
-                    streamId = car1StreamId,
-                    consume = { _ -> throw IllegalStateException("nope") },
-                )
+                .loadStreamForAppend(car1StreamId) { _, appendStream ->
+                    appendStream(listOf<CarEvent>(sold), emptyMap())
+                    throw IllegalStateException("nope")
+                }
         }
 
         // then
@@ -131,10 +122,9 @@ public open class LoadAndAppendStreamTest<R : Storage, S : EventStore, F : Strea
         // when
         eventStore
             .withStreamType(CarStreamType)
-            .loadAndAppendStream(
-                streamId = car1StreamId,
-                consume = { _ -> AppendResult(listOf<CarEvent>(sold)) },
-            )
+            .loadStreamForAppend(car1StreamId) { _, appendStream ->
+                appendStream(listOf<CarEvent>(sold), emptyMap())
+            }
 
         // then
         val car1Events = storage.useStreamEvents(CarStreamType, car1StreamId, 0) { it.toList() }
@@ -158,12 +148,7 @@ public open class LoadAndAppendStreamTest<R : Storage, S : EventStore, F : Strea
         // when
         val loadedSize = eventStore
             .withStreamType(CarStreamType)
-            .loadAndAppendStream(
-                streamId = car1StreamId,
-                sinceVersion = 1,
-                consume = { _ -> AppendResult(emptyList()) },
-                finalize = { loaded, _ -> loaded.size },
-            )
+            .loadStreamForAppend(car1StreamId, sinceVersion = 1) { loaded, _ -> loaded.size }
 
         // then
         assertEquals(1, loadedSize)
@@ -171,7 +156,7 @@ public open class LoadAndAppendStreamTest<R : Storage, S : EventStore, F : Strea
 
     @Test
     @JsName("test7")
-    public fun `appended envelopes have correct positions and metadata`() {
+    public fun `appended envelopes have correct versions - positions and metadata`() {
         // given
         val storage = factory.newStorage()
         val eventStore = factory.newEventStore(storage)
@@ -182,11 +167,9 @@ public open class LoadAndAppendStreamTest<R : Storage, S : EventStore, F : Strea
         // when
         val appended = eventStore
             .withStreamType(CarStreamType)
-            .loadAndAppendStream(
-                streamId = car1StreamId,
-                consume = { _ -> AppendResult(listOf<CarEvent>(event1, event2), metadata) },
-                finalize = { _, appended -> appended },
-            )
+            .loadStreamForAppend(car1StreamId) { _, appendStream ->
+                appendStream(listOf<CarEvent>(event1, event2), metadata)
+            }
 
         // then
         assertEquals(2, appended.size)
@@ -198,8 +181,30 @@ public open class LoadAndAppendStreamTest<R : Storage, S : EventStore, F : Strea
     }
 
     @Test
+    @JsName("test8")
+    public fun `appendStream called twice throws IllegalStateException`() {
+        // given
+        val storage = factory.newStorage()
+        val eventStore = factory.newEventStore(storage)
+        val event1 = CarProducedEvent(vin = "123", producer = 1, make = "kia", model = "rio")
+
+        // when
+        assertFailsWith<IllegalStateException> {
+            eventStore
+                .withStreamType(CarStreamType)
+                .loadStreamForAppend(car1StreamId) { _, appendStream ->
+                    appendStream(listOf<CarEvent>(event1), emptyMap())
+                    appendStream(listOf<CarEvent>(event1), emptyMap())
+                }
+        }
+
+        // then - second call throws inside the block, so the whole call rolls back
+        assertEquals(0, storage.useStreamEvents(CarStreamType, car1StreamId, 0) { it.toList() }.size)
+    }
+
+    @Test
     @JsName("test9")
-    public fun `cached snapshot - sinceVersion skips cached events, finalize computes new cache value`() {
+    public fun `cached snapshot - sinceVersion skips cached event - then block composes new cache value`() {
         // given
         val storage = factory.newStorage()
         val event1 = CarProducedEvent(vin = "123", producer = 1, make = "kia", model = "rio")
@@ -216,17 +221,12 @@ public open class LoadAndAppendStreamTest<R : Storage, S : EventStore, F : Strea
         val event3 = CarSoldEvent(seller = 2, buyer = 3, price = 200.0f)
         val newCacheValue = eventStore
             .withStreamType(CarStreamType)
-            .loadAndAppendStream(
-                streamId = car1StreamId,
-                sinceVersion = cache.lastOrNull()?.version ?: 0,
-                consume = { events ->
-                    assertEquals(1, events.size)
-                    assertEquals(event2, events.single().event)
-                    AppendResult(listOf<CarEvent>(event3))
-                },
-                finalize = { loaded, appended -> cache + loaded + appended },
-            )
-        cache = newCacheValue // the cache is only updated after loadAndAppendStream returns
+            .loadStreamForAppend(car1StreamId, sinceVersion = cache.last().version) { loaded, appendStream ->
+                assertEquals(1, loaded.size)
+                assertEquals(event2, loaded.single().event)
+                cache + loaded + appendStream(listOf<CarEvent>(event3), emptyMap())
+            }
+        cache = newCacheValue // the cache is only updated after loadStreamForAppend returns,
 
         // then
         assertEquals(3, cache.size)
@@ -237,27 +237,5 @@ public open class LoadAndAppendStreamTest<R : Storage, S : EventStore, F : Strea
         assertEquals(2, cache[1].version)
         assertEquals(3, cache[2].version)
         assertEquals(cache, storage.useStreamEvents(CarStreamType, car1StreamId, 0) { it.toList() })
-    }
-
-    @Test
-    @JsName("test8")
-    public fun `Unit overload delegates to the R-returning method`() {
-        // given
-        val storage = factory.newStorage()
-        val eventStore = factory.newEventStore(storage)
-        val event1 = CarProducedEvent(vin = "123", producer = 1, make = "kia", model = "rio")
-
-        // when
-        eventStore
-            .withStreamType(CarStreamType)
-            .loadAndAppendStream(
-                streamId = car1StreamId,
-                consume = { _ -> AppendResult(listOf<CarEvent>(event1)) },
-            )
-
-        // then
-        val stored = storage.useStreamEvents(CarStreamType, car1StreamId, 0) { it.toList() }
-        assertEquals(1, stored.size)
-        assertEquals(event1, stored.single().event)
     }
 }

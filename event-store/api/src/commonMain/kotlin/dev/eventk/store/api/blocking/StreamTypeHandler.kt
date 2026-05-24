@@ -1,6 +1,5 @@
 package dev.eventk.store.api.blocking
 
-import dev.eventk.store.api.AppendResult
 import dev.eventk.store.api.EventEnvelope
 import dev.eventk.store.api.EventMetadata
 import dev.eventk.store.api.StreamType
@@ -42,25 +41,22 @@ public interface StreamTypeHandler<E, I> {
     ): Int
 
     /**
-     * Load events from a stream and append new ones atomically, under a per-stream lock acquired before the load.
+     * Load events from a stream and optionally append new ones atomically, under a per-stream lock held for the
+     * duration of [block].
      *
-     * The [consume] lambda receives a lazy [Sequence] of currently-stored envelopes and returns the events to append
-     * (as an [AppendResult]). Whatever envelopes the lambda iterates through the sequence are captured and passed
-     * to [finalize] alongside the freshly-appended envelopes (with their assigned versions and positions).
+     * [block] receives the currently-stored envelopes (from [sinceVersion]) and an [appendStream] function it may
+     * invoke at most once to atomically append new events to the same stream. The function returns the freshly
+     * appended envelopes (with assigned versions and positions). Calling [appendStream] more than once throws
+     * [IllegalStateException]; not calling it is fine and commits the lock release without writing anything.
      *
-     * If [consume] returns an empty [AppendResult.events], no rows are written but the operation is still committed.
-     * If [consume] throws, nothing is appended.
+     * If [block] throws, nothing is appended.
      */
-    public fun <R> loadAndAppendStream(
+    public fun <R> loadStreamForAppend(
         streamId: I,
         sinceVersion: Int = 0,
-        consume: (List<EventEnvelope<E, I>>) -> AppendResult<E>,
-        finalize: (loaded: List<EventEnvelope<E, I>>, appended: List<EventEnvelope<E, I>>) -> R,
+        block: (
+            loaded: List<EventEnvelope<E, I>>,
+            appendStream: (events: List<E>, metadata: EventMetadata) -> List<EventEnvelope<E, I>>,
+        ) -> R,
     ): R
-
-    public fun loadAndAppendStream(
-        streamId: I,
-        sinceVersion: Int = 0,
-        consume: (List<EventEnvelope<E, I>>) -> AppendResult<E>,
-    ): Unit = loadAndAppendStream(streamId, sinceVersion, consume, finalize = { _, _ -> })
 }

@@ -31,11 +31,10 @@ internal interface DatabaseAdapter {
         tableInfo: TableInfo,
     )
 
-    fun <R> useEntriesAndPersist(
+    fun <R> useEntriesByStreamIdAndVersionWithLock(
         streamId: String,
         sinceVersion: Int,
         tableInfo: TableInfo,
-        consume: (entries: Sequence<DatabaseEntry>) -> List<DatabaseEntry>,
-        finalize: (appended: List<DatabaseEntry>) -> R,
+        block: (loaded: Sequence<DatabaseEntry>, persist: (entries: List<DatabaseEntry>, expectedVersion: Int) -> List<DatabaseEntry>) -> R,
     ): R
 }

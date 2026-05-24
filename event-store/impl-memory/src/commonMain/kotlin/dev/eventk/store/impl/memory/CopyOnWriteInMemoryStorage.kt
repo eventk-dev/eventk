@@ -1,6 +1,5 @@
 package dev.eventk.store.impl.memory
 
-import dev.eventk.store.api.AppendResult
 import dev.eventk.store.api.EventEnvelope
 import dev.eventk.store.api.EventMetadata
 import dev.eventk.store.api.StreamType
@@ -44,24 +43,35 @@ internal class CopyOnWriteInMemoryStorage(
         }
     }
 
-    override fun <E, I, R> useStreamAndAppend(
+    override fun <E, I, R> loadStreamForAppend(
         streamType: StreamType<E, I>,
         streamId: I,
         sinceVersion: Int,
-        consume: (List<EventEnvelope<E, I>>) -> AppendResult<E>,
-        finalize: (loaded: List<EventEnvelope<E, I>>, appended: List<EventEnvelope<E, I>>) -> R,
+        block: (
+            loaded: List<EventEnvelope<E, I>>,
+            appendStream: (events: List<E>, metadata: EventMetadata) -> List<EventEnvelope<E, I>>,
+        ) -> R,
     ): R {
         if (streamType.id !in registeredTypes) throw IllegalStateException("Unregistered type: $streamType")
         return writeLock.withLock {
             val streamEvents = streamEvents<Any, Any>(streamId as Any)
             val loaded = streamEvents.drop(sinceVersion) as List<EventEnvelope<E, I>>
-            val appendResult = consume(loaded)
-            val envelopes = buildEnvelopes(streamType, streamId, streamEvents.size, appendResult.events, appendResult.metadata)
-            if (envelopes.isNotEmpty()) {
+            var alreadyAppended = false
+            var pendingEnvelopes: List<EventEnvelope<Any, Any>>? = null
+            val appendStream: (List<E>, EventMetadata) -> List<EventEnvelope<E, I>> = { events, metadata ->
+                check(!alreadyAppended) { "appendStream can only be called once per loadStreamForAppend block" }
+                alreadyAppended = true
+                val envelopes = buildEnvelopes(streamType, streamId, streamEvents.size, events, metadata)
+                pendingEnvelopes = envelopes
+                envelopes as List<EventEnvelope<E, I>>
+            }
+            val result = block(loaded, appendStream)
+            // commit pending mutation only after the block completes successfully
+            pendingEnvelopes?.takeIf { it.isNotEmpty() }?.let { envelopes ->
                 this.eventsByStreamId += streamId to streamEvents + envelopes
                 this.events += envelopes
             }
-            finalize(loaded, envelopes as List<EventEnvelope<E, I>>)
+            result
         }
     }
 

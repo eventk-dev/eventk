@@ -1,6 +1,5 @@
 package dev.eventk.store.impl.pg
 
-import dev.eventk.store.api.AppendResult
 import dev.eventk.store.api.EventEnvelope
 import dev.eventk.store.api.EventMetadata
 import dev.eventk.store.api.Serializer
@@ -47,39 +46,42 @@ internal class PostgresqlJdbcStorage(
         }
     }
 
-    override fun <E, I, R> useStreamAndAppend(
+    override fun <E, I, R> loadStreamForAppend(
         streamType: StreamType<E, I>,
         streamId: I,
         sinceVersion: Int,
-        consume: (List<EventEnvelope<E, I>>) -> AppendResult<E>,
-        finalize: (loaded: List<EventEnvelope<E, I>>, appended: List<EventEnvelope<E, I>>) -> R,
+        block: (
+            loaded: List<EventEnvelope<E, I>>,
+            appendStream: (events: List<E>, metadata: EventMetadata) -> List<EventEnvelope<E, I>>,
+        ) -> R,
     ): R {
         if (streamType.id !in registeredTypes) throw IllegalStateException("Unregistered type: $streamType")
         val serializedId = streamType.stringIdSerializer.serialize(streamId)
-        var loaded: List<EventEnvelope<E, I>> = emptyList()
 
-        return databaseAdapter.useEntriesAndPersist(
+        return databaseAdapter.useEntriesByStreamIdAndVersionWithLock(
             streamId = serializedId,
             sinceVersion = sinceVersion,
             tableInfo = config.tableInfo,
-            consume = { entries ->
-                loaded = entries.map { it.toEventEnvelope<E, I>() }.toList()
-                val appendResult = consume(loaded)
+        ) { sequence, persist ->
+            val loaded = sequence.map { it.toEventEnvelope<E, I>() }.toList()
+            var alreadyAppended = false
+            val appendStream: (List<E>, EventMetadata) -> List<EventEnvelope<E, I>> = { events, metadata ->
+                check(!alreadyAppended) { "appendStream can only be called once per loadStreamForAppend block" }
+                alreadyAppended = true
                 val currentVersion = sinceVersion + loaded.size
-                appendResult.events.mapIndexed { index, event ->
+                val entries = events.mapIndexed { index, event ->
                     DatabaseEntry(
                         type = streamType.id,
                         id = serializedId,
                         version = currentVersion + index + 1,
                         eventPayload = streamType.stringEventSerializer.serialize(event),
-                        metadataPayload = eventMetadataSerializer.serialize(appendResult.metadata),
+                        metadataPayload = eventMetadataSerializer.serialize(metadata),
                     )
                 }
-            },
-            finalize = { appendedEntries ->
-                finalize(loaded, appendedEntries.map { it.toEventEnvelope() })
-            },
-        )
+                persist(entries, currentVersion).map { it.toEventEnvelope() }
+            }
+            block(loaded, appendStream)
+        }
     }
 
     override fun <E, I> loadEventBatch(sincePosition: Long, batchSize: Int): List<EventEnvelope<E, I>> {

@@ -1,6 +1,5 @@
 package dev.eventk.store.impl.fs
 
-import dev.eventk.store.api.AppendResult
 import dev.eventk.store.api.EventEnvelope
 import dev.eventk.store.api.EventMetadata
 import dev.eventk.store.api.Serializer
@@ -184,12 +183,14 @@ public class FileSystemStorage internal constructor(
         return result as R
     }
 
-    override fun <E, I, R> useStreamAndAppend(
+    override fun <E, I, R> loadStreamForAppend(
         streamType: StreamType<E, I>,
         streamId: I,
         sinceVersion: Int,
-        consume: (List<EventEnvelope<E, I>>) -> AppendResult<E>,
-        finalize: (loaded: List<EventEnvelope<E, I>>, appended: List<EventEnvelope<E, I>>) -> R,
+        block: (
+            loaded: List<EventEnvelope<E, I>>,
+            appendStream: (events: List<E>, metadata: EventMetadata) -> List<EventEnvelope<E, I>>,
+        ) -> R,
     ): R {
         if (streamType.id !in registeredTypes) throwIfNotRegistered(streamType.id)
         val streamPath = basePath / toPathComponent(streamId, streamType.stringIdSerializer)
@@ -224,73 +225,76 @@ public class FileSystemStorage internal constructor(
                     }
                 }
 
-                val appendResult = consume(loaded)
-
-                val appendedEnvelopes = if (appendResult.events.isEmpty()) {
-                    emptyList()
-                } else {
-                    val metadataPayload = eventMetadataSerializer.serialize(appendResult.metadata)
-                    val dataEntries = appendResult.events.mapIndexed { index, event ->
-                        val eventPayload = streamType.binaryEventSerializer.serialize(event)
-                        val dataFileEntry = DataFileEntry(
-                            type = streamType.id,
-                            id = streamType.stringIdSerializer.serialize(streamId),
-                            version = currentVersion + index + 1,
-                            eventPayload = eventPayload,
-                            metadataPayload = metadataPayload,
-                        )
-                        dataFileEntryFormat.encodeToByteArray(DataFileEntry.serializer(), dataFileEntry)
-                    }
-
-                    val dataAddressFirstAppend = dataHandleRw.size()
-                    val positionFirstAppend = 1L + if (dataAddressFirstAppend > 0) {
-                        dataHandleRw.source(dataAddressFirstAppend - Long.SIZE_BYTES).use { s ->
-                            s.buffer().use { it.readLong() }
-                        }
+                var alreadyAppended = false
+                val appendStream: (List<E>, EventMetadata) -> List<EventEnvelope<E, I>> = { events, metadata ->
+                    check(!alreadyAppended) { "appendStream can only be called once per loadStreamForAppend block" }
+                    alreadyAppended = true
+                    if (events.isEmpty()) {
+                        emptyList()
                     } else {
-                        0L
-                    }
-
-                    val dataAddresses = dataHandleRw.appendingSink().buffer().use { dataBuffer ->
-                        var appended = 0L
-                        dataEntries.mapIndexed { index, dataEntryBytes ->
-                            val addr = dataAddressFirstAppend + appended
-
-                            dataBuffer.writeInt(dataEntryBytes.size)
-                            dataBuffer.write(dataEntryBytes)
-                            dataBuffer.writeInt(dataEntryBytes.size)
-                            dataBuffer.writeLong(positionFirstAppend + index)
-                            appended += 4L + dataEntryBytes.size + 4L + STREAM_ENTRY_SIZE_IN_BYTES
-
-                            addr
+                        val metadataPayload = eventMetadataSerializer.serialize(metadata)
+                        val dataEntries = events.mapIndexed { index, event ->
+                            val eventPayload = streamType.binaryEventSerializer.serialize(event)
+                            val dataFileEntry = DataFileEntry(
+                                type = streamType.id,
+                                id = streamType.stringIdSerializer.serialize(streamId),
+                                version = currentVersion + index + 1,
+                                eventPayload = eventPayload,
+                                metadataPayload = metadataPayload,
+                            )
+                            dataFileEntryFormat.encodeToByteArray(DataFileEntry.serializer(), dataFileEntry)
                         }
-                    }
 
-                    posHandleRw.appendingSink().buffer().use { posBuffer ->
-                        dataAddresses.forEach { dataAddress ->
-                            posBuffer.writeLong(dataAddress)
+                        val dataAddressFirstAppend = dataHandleRw.size()
+                        val positionFirstAppend = 1L + if (dataAddressFirstAppend > 0) {
+                            dataHandleRw.source(dataAddressFirstAppend - Long.SIZE_BYTES).use { s ->
+                                s.buffer().use { it.readLong() }
+                            }
+                        } else {
+                            0L
                         }
-                    }
 
-                    streamHandleRw.appendingSink().buffer().use { streamBuffer ->
-                        dataAddresses.forEach { dataAddress ->
-                            streamBuffer.writeLong(dataAddress)
+                        val dataAddresses = dataHandleRw.appendingSink().buffer().use { dataBuffer ->
+                            var appended = 0L
+                            dataEntries.mapIndexed { index, dataEntryBytes ->
+                                val addr = dataAddressFirstAppend + appended
+
+                                dataBuffer.writeInt(dataEntryBytes.size)
+                                dataBuffer.write(dataEntryBytes)
+                                dataBuffer.writeInt(dataEntryBytes.size)
+                                dataBuffer.writeLong(positionFirstAppend + index)
+                                appended += 4L + dataEntryBytes.size + 4L + STREAM_ENTRY_SIZE_IN_BYTES
+
+                                addr
+                            }
                         }
-                    }
 
-                    appendResult.events.mapIndexed { index, event ->
-                        EventEnvelope(
-                            streamType = streamType,
-                            streamId = streamId,
-                            version = currentVersion + index + 1,
-                            position = positionFirstAppend + index,
-                            metadata = appendResult.metadata,
-                            event = event,
-                        )
+                        posHandleRw.appendingSink().buffer().use { posBuffer ->
+                            dataAddresses.forEach { dataAddress ->
+                                posBuffer.writeLong(dataAddress)
+                            }
+                        }
+
+                        streamHandleRw.appendingSink().buffer().use { streamBuffer ->
+                            dataAddresses.forEach { dataAddress ->
+                                streamBuffer.writeLong(dataAddress)
+                            }
+                        }
+
+                        events.mapIndexed { index, event ->
+                            EventEnvelope(
+                                streamType = streamType,
+                                streamId = streamId,
+                                version = currentVersion + index + 1,
+                                position = positionFirstAppend + index,
+                                metadata = metadata,
+                                event = event,
+                            )
+                        }
                     }
                 }
 
-                finalize(loaded, appendedEnvelopes)
+                block(loaded, appendStream)
             }
         }
     }
