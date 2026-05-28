@@ -42,4 +42,13 @@ internal class NativeDatabaseAdapter : DatabaseAdapter {
     override fun persistEntries(streamId: String, expectedVersion: Int, entries: List<DatabaseEntry>, tableInfo: TableInfo) {
         TODO("Not yet implemented")
     }
+
+    override fun <R> useEntriesByStreamIdAndVersionWithLck(
+        streamId: String,
+        sinceVersion: Int,
+        tableInfo: TableInfo,
+        block: (loaded: Sequence<DatabaseEntry>, persist: (entries: List<DatabaseEntry>, expectedVersion: Int) -> List<DatabaseEntry>) -> R,
+    ): R {
+        TODO("Not yet implemented")
+    }
 }

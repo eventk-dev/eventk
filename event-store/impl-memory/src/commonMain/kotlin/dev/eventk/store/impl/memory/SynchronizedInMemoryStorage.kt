@@ -51,21 +51,64 @@ internal class SynchronizedInMemoryStorage(
             if (streamEvents.size != expectedVersion) {
                 throw StorageVersionMismatchException(currentVersion = streamEvents.size, expectedVersion = expectedVersion)
             }
-            val envelopes = events.mapIndexed { index, event ->
-                val position = this.events.size + index + 1L
-                val version = expectedVersion + index + 1
-
-                EventEnvelope(
-                    streamType = streamType as StreamType<Any, Any>,
-                    streamId = streamId as Any,
-                    version = version,
-                    position = position,
-                    metadata = metadata,
-                    event = event as Any,
-                )
-            }
+            val envelopes = buildEnvelopes(streamType, streamId, expectedVersion, events, metadata)
             streamEvents += envelopes
             this.events += envelopes
+        }
+    }
+
+    override fun <E, I, R> loadStreamForAppend(
+        streamType: StreamType<E, I>,
+        streamId: I,
+        sinceVersion: Int,
+        block: (
+            loaded: List<EventEnvelope<E, I>>,
+            appendStream: (events: List<E>, metadata: EventMetadata) -> List<EventEnvelope<E, I>>,
+        ) -> R,
+    ): R {
+        if (streamType.id !in registeredTypes) throw IllegalStateException("Unregistered type: $streamType")
+        return writeLock.withLock {
+            val streamEvents = eventsByStreamId[streamId as Any] ?: mutableListOf()
+            val loaded = streamEvents.drop(sinceVersion) as List<EventEnvelope<E, I>>
+            var alreadyAppended = false
+            var pendingEnvelopes: List<EventEnvelope<Any, Any>>? = null
+            val appendStream: (List<E>, EventMetadata) -> List<EventEnvelope<E, I>> = { events, metadata ->
+                check(!alreadyAppended) { "appendStream can only be called once per loadStreamForAppend block" }
+                alreadyAppended = true
+                val envelopes = buildEnvelopes(streamType, streamId, streamEvents.size, events, metadata)
+                pendingEnvelopes = envelopes
+                envelopes as List<EventEnvelope<E, I>>
+            }
+            val result = block(loaded, appendStream)
+            // commit pending mutation only after the block completes successfully
+            pendingEnvelopes?.takeIf { it.isNotEmpty() }?.let { envelopes ->
+                val target = eventsByStreamId.getOrPut(streamId as Any) { mutableListOf() }
+                target += envelopes
+                this.events += envelopes
+            }
+            result
+        }
+    }
+
+    private fun <E, I> buildEnvelopes(
+        streamType: StreamType<E, I>,
+        streamId: I,
+        expectedVersion: Int,
+        events: List<E>,
+        metadata: EventMetadata,
+    ): List<EventEnvelope<Any, Any>> {
+        return events.mapIndexed { index, event ->
+            val position = this.events.size + index + 1L
+            val version = expectedVersion + index + 1
+
+            EventEnvelope(
+                streamType = streamType as StreamType<Any, Any>,
+                streamId = streamId as Any,
+                version = version,
+                position = position,
+                metadata = metadata,
+                event = event as Any,
+            )
         }
     }
 

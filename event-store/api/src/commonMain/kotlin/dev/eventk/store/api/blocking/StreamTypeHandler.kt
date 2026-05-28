@@ -39,4 +39,24 @@ public interface StreamTypeHandler<E, I> {
         events: List<E>,
         metadata: EventMetadata = emptyMap(),
     ): Int
+
+    /**
+     * Load events from a stream and optionally append new ones atomically, under a per-stream lock held for the
+     * duration of [block].
+     *
+     * [block] receives the currently-stored envelopes (from [sinceVersion]) and an [appendStream] function it may
+     * invoke at most once to atomically append new events to the same stream. The function returns the freshly
+     * appended envelopes (with assigned versions and positions). Calling [appendStream] more than once throws
+     * [IllegalStateException]; not calling it is fine and commits the lock release without writing anything.
+     *
+     * If [block] throws, nothing is appended.
+     */
+    public fun <R> loadStreamForAppend(
+        streamId: I,
+        sinceVersion: Int = 0,
+        block: (
+            loaded: List<EventEnvelope<E, I>>,
+            appendStream: (events: List<E>, metadata: EventMetadata) -> List<EventEnvelope<E, I>>,
+        ) -> R,
+    ): R
 }

@@ -46,6 +46,44 @@ internal class PostgresqlJdbcStorage(
         }
     }
 
+    override fun <E, I, R> loadStreamForAppend(
+        streamType: StreamType<E, I>,
+        streamId: I,
+        sinceVersion: Int,
+        block: (
+            loaded: List<EventEnvelope<E, I>>,
+            appendStream: (events: List<E>, metadata: EventMetadata) -> List<EventEnvelope<E, I>>,
+        ) -> R,
+    ): R {
+        if (streamType.id !in registeredTypes) throw IllegalStateException("Unregistered type: $streamType")
+        val serializedId = streamType.stringIdSerializer.serialize(streamId)
+
+        return databaseAdapter.useEntriesByStreamIdAndVersionWithLock(
+            streamId = serializedId,
+            sinceVersion = sinceVersion,
+            tableInfo = config.tableInfo,
+        ) { sequence, persist ->
+            val loaded = sequence.map { it.toEventEnvelope<E, I>() }.toList()
+            var alreadyAppended = false
+            val appendStream: (List<E>, EventMetadata) -> List<EventEnvelope<E, I>> = { events, metadata ->
+                check(!alreadyAppended) { "appendStream can only be called once per loadStreamForAppend block" }
+                alreadyAppended = true
+                val currentVersion = sinceVersion + loaded.size
+                val entries = events.mapIndexed { index, event ->
+                    DatabaseEntry(
+                        type = streamType.id,
+                        id = serializedId,
+                        version = currentVersion + index + 1,
+                        eventPayload = streamType.stringEventSerializer.serialize(event),
+                        metadataPayload = eventMetadataSerializer.serialize(metadata),
+                    )
+                }
+                persist(entries, currentVersion).map { it.toEventEnvelope() }
+            }
+            block(loaded, appendStream)
+        }
+    }
+
     override fun <E, I> loadEventBatch(sincePosition: Long, batchSize: Int): List<EventEnvelope<E, I>> {
         val entries = databaseAdapter.getEntryBatch(
             sincePosition = sincePosition,

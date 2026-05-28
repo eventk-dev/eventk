@@ -29,4 +29,19 @@ public class StreamTypeHandler<E, I>(
         }
         return expectedVersion + events.size
     }
+
+    override fun <R> loadStreamForAppend(
+        streamId: I,
+        sinceVersion: Int,
+        block: (
+            loaded: List<EventEnvelope<E, I>>,
+            appendStream: (events: List<E>, metadata: EventMetadata) -> List<EventEnvelope<E, I>>,
+        ) -> R,
+    ): R {
+        try {
+            return storage.loadStreamForAppend(streamType, streamId, sinceVersion, block)
+        } catch (e: StorageVersionMismatchException) {
+            throw StreamVersionMismatchException(e.currentVersion, e.expectedVersion)
+        }
+    }
 }

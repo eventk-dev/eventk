@@ -14,4 +14,18 @@ public interface Storage {
     public fun <E, I> loadEventBatch(sincePosition: Long, batchSize: Int): List<EventEnvelope<E, I>>
 
     public fun <E, I> loadEventBatch(sincePosition: Long, batchSize: Int, streamType: StreamType<E, I>): List<EventEnvelope<E, I>>
+
+    /**
+     * Load events from a stream and optionally append new ones atomically, under a per-stream lock held for the
+     * duration of [block]. The [appendStream] function provided to [block] may be invoked at most once.
+     */
+    public fun <E, I, R> loadStreamForAppend(
+        streamType: StreamType<E, I>,
+        streamId: I,
+        sinceVersion: Int,
+        block: (
+            loaded: List<EventEnvelope<E, I>>,
+            appendStream: (events: List<E>, metadata: EventMetadata) -> List<EventEnvelope<E, I>>,
+        ) -> R,
+    ): R
 }

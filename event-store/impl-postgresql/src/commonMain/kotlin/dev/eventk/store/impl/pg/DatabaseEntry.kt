@@ -1,6 +1,6 @@
 package dev.eventk.store.impl.pg
 
-internal class DatabaseEntry(
+internal data class DatabaseEntry(
     val position: Long = -1,
     val type: String,
     val id: String,
