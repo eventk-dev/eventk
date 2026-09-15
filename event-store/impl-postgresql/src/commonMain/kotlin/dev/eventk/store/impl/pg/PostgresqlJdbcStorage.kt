@@ -4,8 +4,10 @@ import dev.eventk.store.api.EventEnvelope
 import dev.eventk.store.api.EventMetadata
 import dev.eventk.store.api.Serializer
 import dev.eventk.store.api.StreamType
+import dev.eventk.store.storage.api.blocking.InternalStorageApi
 import dev.eventk.store.storage.api.blocking.Storage
 
+@OptIn(InternalStorageApi::class)
 internal class PostgresqlJdbcStorage(
     internal val config: PostgresqlConfig<DataSource>,
 ) : Storage {

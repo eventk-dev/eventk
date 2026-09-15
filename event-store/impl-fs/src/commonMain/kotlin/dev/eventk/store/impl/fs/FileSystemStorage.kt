@@ -5,6 +5,7 @@ import dev.eventk.store.api.EventMetadata
 import dev.eventk.store.api.Serializer
 import dev.eventk.store.api.StreamType
 import dev.eventk.store.storage.api.StorageVersionMismatchException
+import dev.eventk.store.storage.api.blocking.InternalStorageApi
 import dev.eventk.store.storage.api.blocking.Storage
 import kotlinx.atomicfu.locks.reentrantLock
 import kotlinx.atomicfu.locks.withLock
@@ -15,7 +16,7 @@ import okio.Path.Companion.toPath
 import okio.buffer
 import okio.use
 
-@OptIn(ExperimentalSerializationApi::class)
+@OptIn(ExperimentalSerializationApi::class, InternalStorageApi::class)
 public class FileSystemStorage internal constructor(
     private val config: FileSystemConfig,
 ) : Storage {

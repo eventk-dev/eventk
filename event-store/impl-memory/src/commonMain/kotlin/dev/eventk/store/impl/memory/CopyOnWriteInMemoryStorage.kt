@@ -4,11 +4,13 @@ import dev.eventk.store.api.EventEnvelope
 import dev.eventk.store.api.EventMetadata
 import dev.eventk.store.api.StreamType
 import dev.eventk.store.storage.api.StorageVersionMismatchException
+import dev.eventk.store.storage.api.blocking.InternalStorageApi
 import dev.eventk.store.storage.api.blocking.Storage
 import kotlinx.atomicfu.locks.reentrantLock
 import kotlinx.atomicfu.locks.withLock
 
 @Suppress("UNCHECKED_CAST")
+@OptIn(InternalStorageApi::class)
 internal class CopyOnWriteInMemoryStorage(
     config: InMemoryConfig,
 ) : Storage {
