@@ -184,12 +184,12 @@ public class FileSystemStorage internal constructor(
         return result as R
     }
 
-    override fun <E, I, R> loadStreamForAppend(
+    override fun <E, I, R> useStreamForAppend(
         streamType: StreamType<E, I>,
         streamId: I,
         sinceVersion: Int,
         block: (
-            loaded: List<EventEnvelope<E, I>>,
+            stream: Sequence<EventEnvelope<E, I>>,
             appendStream: (events: List<E>, metadata: EventMetadata) -> List<EventEnvelope<E, I>>,
         ) -> R,
     ): R {
@@ -205,10 +205,10 @@ public class FileSystemStorage internal constructor(
             useHandles(fs.openReadWrite(dataPath), fs.openReadWrite(posPath), fs.openReadWrite(streamPath)) { dataHandleRw, posHandleRw, streamHandleRw ->
                 val currentVersion = (streamHandleRw.size() / STREAM_ENTRY_SIZE_IN_BYTES).toInt()
 
-                val loaded: List<EventEnvelope<E, I>> = if (sinceVersion >= currentVersion) {
-                    emptyList()
+                val stream: Sequence<EventEnvelope<E, I>> = if (sinceVersion >= currentVersion) {
+                    emptySequence()
                 } else {
-                    buildList {
+                    sequence {
                         streamHandleRw.source(sinceVersion * STREAM_ENTRY_SIZE_IN_BYTES).buffer().use { streamSource ->
                             var read = 0
                             while (!streamSource.exhausted()) {
@@ -220,7 +220,7 @@ public class FileSystemStorage internal constructor(
                                     val message = "Error reading data file at address $addr, pointer from stream $streamId version ${sinceVersion + read}."
                                     throw CorruptedDataException(message, e)
                                 }
-                                add(envelope)
+                                yield(envelope)
                             }
                         }
                     }
@@ -228,7 +228,7 @@ public class FileSystemStorage internal constructor(
 
                 var alreadyAppended = false
                 val appendStream: (List<E>, EventMetadata) -> List<EventEnvelope<E, I>> = { events, metadata ->
-                    check(!alreadyAppended) { "appendStream can only be called once per loadStreamForAppend block" }
+                    check(!alreadyAppended) { "appendStream can only be called once per useStreamForAppend block" }
                     alreadyAppended = true
                     if (events.isEmpty()) {
                         emptyList()
@@ -295,7 +295,7 @@ public class FileSystemStorage internal constructor(
                     }
                 }
 
-                block(loaded, appendStream)
+                block(stream, appendStream)
             }
         }
     }

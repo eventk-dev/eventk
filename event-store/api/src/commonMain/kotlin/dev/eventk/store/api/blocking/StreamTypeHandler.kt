@@ -59,4 +59,27 @@ public interface StreamTypeHandler<E, I> {
             appendStream: (events: List<E>, metadata: EventMetadata) -> List<EventEnvelope<E, I>>,
         ) -> R,
     ): R
+
+    /**
+     * Lazy, streaming equivalent of [loadStreamForAppend].
+     *
+     * [block] receives the currently-stored envelopes (from [sinceVersion]) as a lazily-consumed [Sequence], and an
+     * [appendStream] function it may invoke at most once to atomically append new events to the same stream. The
+     * function returns the freshly appended envelopes (with assigned versions and positions). Calling [appendStream]
+     * more than once throws [IllegalStateException]; not calling it is fine and commits the lock release without
+     * writing anything.
+     *
+     * The per-stream lock and any underlying resources are held for the duration of [block], so [stream] must be
+     * consumed within it; it becomes invalid once this method returns.
+     *
+     * If [block] throws, nothing is appended.
+     */
+    public fun <R> useStreamForAppend(
+        streamId: I,
+        sinceVersion: Int = 0,
+        block: (
+            stream: Sequence<EventEnvelope<E, I>>,
+            appendStream: (events: List<E>, metadata: EventMetadata) -> List<EventEnvelope<E, I>>,
+        ) -> R,
+    ): R
 }

@@ -59,29 +59,29 @@ internal class SynchronizedInMemoryStorage(
         }
     }
 
-    override fun <E, I, R> loadStreamForAppend(
+    override fun <E, I, R> useStreamForAppend(
         streamType: StreamType<E, I>,
         streamId: I,
         sinceVersion: Int,
         block: (
-            loaded: List<EventEnvelope<E, I>>,
+            stream: Sequence<EventEnvelope<E, I>>,
             appendStream: (events: List<E>, metadata: EventMetadata) -> List<EventEnvelope<E, I>>,
         ) -> R,
     ): R {
         if (streamType.id !in registeredTypes) throw IllegalStateException("Unregistered type: $streamType")
         return writeLock.withLock {
             val streamEvents = eventsByStreamId[streamId as Any] ?: mutableListOf()
-            val loaded = streamEvents.drop(sinceVersion) as List<EventEnvelope<E, I>>
+            val stream = streamEvents.asSequence().drop(sinceVersion) as Sequence<EventEnvelope<E, I>>
             var alreadyAppended = false
             var pendingEnvelopes: List<EventEnvelope<Any, Any>>? = null
             val appendStream: (List<E>, EventMetadata) -> List<EventEnvelope<E, I>> = { events, metadata ->
-                check(!alreadyAppended) { "appendStream can only be called once per loadStreamForAppend block" }
+                check(!alreadyAppended) { "appendStream can only be called once per useStreamForAppend block" }
                 alreadyAppended = true
                 val envelopes = buildEnvelopes(streamType, streamId, streamEvents.size, events, metadata)
                 pendingEnvelopes = envelopes
                 envelopes as List<EventEnvelope<E, I>>
             }
-            val result = block(loaded, appendStream)
+            val result = block(stream, appendStream)
             // commit pending mutation only after the block completes successfully
             pendingEnvelopes?.takeIf { it.isNotEmpty() }?.let { envelopes ->
                 val target = eventsByStreamId.getOrPut(streamId as Any) { mutableListOf() }
