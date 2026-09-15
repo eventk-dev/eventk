@@ -20,14 +20,16 @@ public interface Storage {
 
     /**
      * Load events from a stream and optionally append new ones atomically, under a per-stream lock held for the
-     * duration of [block]. The [appendStream] function provided to [block] may be invoked at most once.
+     * duration of [block]. The [appendStream] function provided to [block] may be invoked at most once. The
+     * per-stream lock and any underlying resources are held for the duration of [block], so the [Sequence] it
+     * receives must be consumed within it.
      */
-    public fun <E, I, R> loadStreamForAppend(
+    public fun <E, I, R> useStreamForAppend(
         streamType: StreamType<E, I>,
         streamId: I,
         sinceVersion: Int,
         block: (
-            loaded: List<EventEnvelope<E, I>>,
+            stream: Sequence<EventEnvelope<E, I>>,
             appendStream: (events: List<E>, metadata: EventMetadata) -> List<EventEnvelope<E, I>>,
         ) -> R,
     ): R

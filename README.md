@@ -112,6 +112,22 @@ val newCacheValue = eventStore
 cache = newCacheValue
 ```
 
+##### `useStreamForAppend`
+
+Lazy, streaming equivalent of `loadStreamForAppend` — same locking and atomic-append semantics, but the block receives a `Sequence` (`stream`) instead of a `List`, so a large stream can be folded over without loading it fully into memory:
+
+```kotlin
+val result = eventStore
+    .withStreamType(CarStreamType)
+    .useStreamForAppend(car1StreamId) { stream, appendStream ->
+        val car = stream.fold(Car()) { c, envelope -> c + envelope.event }
+        val result = car.handle(CarCommand())
+        appendStream(result, emptyMap())
+    }
+```
+
+As with `useStream`, the lock and underlying resources are held for the duration of the block, so `stream` must be consumed within it.
+
 ### Hexagonal Architecture Helpers
 
 Besides the core event store, we also provide some helpers to make working with hexagonal architecture easier.

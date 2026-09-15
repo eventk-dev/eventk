@@ -48,12 +48,12 @@ internal class PostgresqlJdbcStorage(
         }
     }
 
-    override fun <E, I, R> loadStreamForAppend(
+    override fun <E, I, R> useStreamForAppend(
         streamType: StreamType<E, I>,
         streamId: I,
         sinceVersion: Int,
         block: (
-            loaded: List<EventEnvelope<E, I>>,
+            stream: Sequence<EventEnvelope<E, I>>,
             appendStream: (events: List<E>, metadata: EventMetadata) -> List<EventEnvelope<E, I>>,
         ) -> R,
     ): R {
@@ -65,12 +65,28 @@ internal class PostgresqlJdbcStorage(
             sinceVersion = sinceVersion,
             tableInfo = config.tableInfo,
         ) { sequence, persist ->
-            val loaded = sequence.map { it.toEventEnvelope<E, I>() }.toList()
+            val iterator = sequence.iterator()
+            var consumed = 0
+            val stream = Sequence {
+                object : Iterator<EventEnvelope<E, I>> {
+                    override fun hasNext() = iterator.hasNext()
+                    override fun next(): EventEnvelope<E, I> {
+                        val entry = iterator.next()
+                        consumed++
+                        return entry.toEventEnvelope()
+                    }
+                }
+            }
             var alreadyAppended = false
             val appendStream: (List<E>, EventMetadata) -> List<EventEnvelope<E, I>> = { events, metadata ->
-                check(!alreadyAppended) { "appendStream can only be called once per loadStreamForAppend block" }
+                check(!alreadyAppended) { "appendStream can only be called once per useStreamForAppend block" }
                 alreadyAppended = true
-                val currentVersion = sinceVersion + loaded.size
+                // drain any unread part of the stream so the append version reflects the true current version
+                while (iterator.hasNext()) {
+                    iterator.next()
+                    consumed++
+                }
+                val currentVersion = sinceVersion + consumed
                 val entries = events.mapIndexed { index, event ->
                     DatabaseEntry(
                         type = streamType.id,
@@ -82,7 +98,7 @@ internal class PostgresqlJdbcStorage(
                 }
                 persist(entries, currentVersion).map { it.toEventEnvelope() }
             }
-            block(loaded, appendStream)
+            block(stream, appendStream)
         }
     }
 
