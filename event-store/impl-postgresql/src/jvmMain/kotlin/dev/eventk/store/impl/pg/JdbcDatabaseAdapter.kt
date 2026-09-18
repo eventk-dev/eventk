@@ -1,28 +1,36 @@
 package dev.eventk.store.impl.pg
 
+import dev.eventk.store.api.EventStreamLockException
 import dev.eventk.store.storage.api.StorageVersionMismatchException
 import org.postgresql.util.PSQLException
 import org.postgresql.util.PSQLState
 import java.sql.BatchUpdateException
 import java.sql.PreparedStatement
 import java.sql.ResultSet
+import java.sql.SQLException
 import java.sql.Statement
 import javax.sql.DataSource
 
 internal class JdbcDatabaseAdapter(
     private val dataSource: DataSource,
 ) : dev.eventk.store.impl.pg.blocking.DatabaseAdapter {
+    private inline fun <R> jdbc(block: () -> R): R = try {
+        block()
+    } catch (e: SQLException) {
+        throw PostgresqlStorageException(e)
+    }
+
     override fun getEntryByPosition(
         position: Long,
         tableInfo: TableInfo,
-    ): DatabaseEntry {
+    ): DatabaseEntry = jdbc {
         dataSource.connection.use { connection ->
             connection.prepareStatement(selectEventByPositionSql(tableInfo))
                 .use { ps ->
                     ps.setLong(1, position)
                     ps.executeQuery().use { rs ->
                         rs.next()
-                        return rs.databaseEntry()
+                        return@jdbc rs.databaseEntry()
                     }
                 }
         }
@@ -33,14 +41,14 @@ internal class JdbcDatabaseAdapter(
         batchSize: Int,
         type: String?,
         tableInfo: TableInfo,
-    ): List<DatabaseEntry> {
+    ): List<DatabaseEntry> = jdbc {
         dataSource.connection.use { connection ->
             when (type) {
                 null -> connection.prepareStatement(selectEventSincePositionSql(tableInfo)).use { ps ->
                     ps.setLong(1, sincePosition)
                     ps.setInt(2, batchSize)
                     ps.executeQuery().use { rs ->
-                        return buildList {
+                        return@jdbc buildList {
                             while (rs.next()) {
                                 add(rs.databaseEntry())
                             }
@@ -53,7 +61,7 @@ internal class JdbcDatabaseAdapter(
                     ps.setLong(2, sincePosition)
                     ps.setInt(3, batchSize)
                     ps.executeQuery().use { rs ->
-                        return buildList {
+                        return@jdbc buildList {
                             while (rs.next()) {
                                 add(rs.databaseEntry())
                             }
@@ -70,7 +78,7 @@ internal class JdbcDatabaseAdapter(
         limit: Int,
         tableInfo: TableInfo,
         consume: (Sequence<DatabaseEntry>) -> R,
-    ): R {
+    ): R = jdbc {
         dataSource.connection.use { connection ->
             val stm = selectEventByStreamIdAndVersionSql(tableInfo)
             connection.prepareStatement(stm).use { ps ->
@@ -78,7 +86,7 @@ internal class JdbcDatabaseAdapter(
                 ps.setInt(2, sinceVersion)
                 ps.setInt(3, limit)
                 ps.executeQuery().use { rs ->
-                    return consume(
+                    return@jdbc consume(
                         sequence {
                             while (rs.next()) {
                                 yield(rs.databaseEntry())
@@ -106,13 +114,18 @@ internal class JdbcDatabaseAdapter(
         sinceVersion: Int,
         tableInfo: TableInfo,
         block: (loaded: Sequence<DatabaseEntry>, persist: (entries: List<DatabaseEntry>, expectedVersion: Int) -> List<DatabaseEntry>) -> R,
-    ): R {
+    ): R = jdbc {
         dataSource.connection.use { connection ->
             connection.autoCommit = false
             try {
-                connection.prepareStatement("select pg_advisory_xact_lock(hashtextextended(?, 0))").use { ps ->
-                    ps.setString(1, streamId)
-                    ps.execute()
+                try {
+                    connection.prepareStatement("select pg_advisory_xact_lock(hashtextextended(?, 0))").use { ps ->
+                        ps.setString(1, streamId)
+                        ps.execute()
+                    }
+                } catch (e: SQLException) {
+                    if (e.isLockTimeout()) throw EventStreamLockException(e)
+                    throw e
                 }
 
                 val persist: (List<DatabaseEntry>, expectedVersion: Int) -> List<DatabaseEntry> = { entries, expectedVersion ->
@@ -156,7 +169,7 @@ internal class JdbcDatabaseAdapter(
                     }
                 }
                 connection.commit()
-                return result
+                return@jdbc result
             } catch (t: Throwable) {
                 try {
                     connection.rollback()
@@ -168,7 +181,7 @@ internal class JdbcDatabaseAdapter(
         }
     }
 
-    override fun persistEntries(streamId: String, expectedVersion: Int, entries: List<DatabaseEntry>, tableInfo: TableInfo) {
+    override fun persistEntries(streamId: String, expectedVersion: Int, entries: List<DatabaseEntry>, tableInfo: TableInfo): Unit = jdbc {
         dataSource.connection.use { connection ->
             connection.prepareStatement(selectMaxVersionByStreamIdSql(tableInfo)).use { ps ->
                 ps.setObject(1, streamId, java.sql.Types.OTHER)
@@ -223,4 +236,8 @@ internal class JdbcDatabaseAdapter(
             else -> throw e
         }
     }
+
+    // 55P03 (lock_not_available) is Postgres's SQLSTATE for a lock_timeout cancellation; not
+    // exposed as a named constant in PSQLState.
+    private fun SQLException.isLockTimeout(): Boolean = this is PSQLException && sqlState == "55P03"
 }
