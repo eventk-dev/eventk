@@ -5,11 +5,14 @@ import dev.eventk.store.storage.api.StorageVersionMismatchException
 import org.postgresql.util.PSQLException
 import org.postgresql.util.PSQLState
 import java.sql.BatchUpdateException
+import java.sql.Connection
 import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.SQLException
 import java.sql.Statement
 import javax.sql.DataSource
+
+private const val STREAM_FETCH_SIZE = 1_000
 
 internal class JdbcDatabaseAdapter(
     private val dataSource: DataSource,
@@ -19,6 +22,23 @@ internal class JdbcDatabaseAdapter(
     } catch (e: SQLException) {
         throw PostgresqlStorageException(e)
     }
+
+    private inline fun <R> transaction(block: (Connection) -> R): R =
+        dataSource.connection.use { connection ->
+            connection.autoCommit = false
+            try {
+                val result = block(connection)
+                connection.commit()
+                result
+            } catch (t: Throwable) {
+                try {
+                    connection.rollback()
+                } catch (rollbackError: Throwable) {
+                    t.addSuppressed(rollbackError)
+                }
+                throw t
+            }
+        }
 
     override fun getEntryByPosition(
         position: Long,
@@ -79,14 +99,15 @@ internal class JdbcDatabaseAdapter(
         tableInfo: TableInfo,
         consume: (Sequence<DatabaseEntry>) -> R,
     ): R = jdbc {
-        dataSource.connection.use { connection ->
+        transaction { connection ->
             val stm = selectEventByStreamIdAndVersionSql(tableInfo)
             connection.prepareStatement(stm).use { ps ->
+                ps.fetchSize = STREAM_FETCH_SIZE
                 ps.setObject(1, streamId, java.sql.Types.OTHER)
                 ps.setInt(2, sinceVersion)
                 ps.setInt(3, limit)
                 ps.executeQuery().use { rs ->
-                    return@jdbc consume(
+                    consume(
                         sequence {
                             while (rs.next()) {
                                 yield(rs.databaseEntry())
@@ -115,68 +136,57 @@ internal class JdbcDatabaseAdapter(
         tableInfo: TableInfo,
         block: (loaded: Sequence<DatabaseEntry>, persist: (entries: List<DatabaseEntry>, expectedVersion: Int) -> List<DatabaseEntry>) -> R,
     ): R = jdbc {
-        dataSource.connection.use { connection ->
-            connection.autoCommit = false
+        transaction { connection ->
             try {
-                try {
-                    connection.prepareStatement("select pg_advisory_xact_lock(hashtextextended(?, 0))").use { ps ->
-                        ps.setString(1, streamId)
-                        ps.execute()
-                    }
-                } catch (e: SQLException) {
-                    if (e.isLockTimeout()) throw EventStreamLockException(e)
-                    throw e
+                connection.prepareStatement("select pg_advisory_xact_lock(hashtextextended(?, 0))").use { ps ->
+                    ps.setString(1, streamId)
+                    ps.execute()
                 }
+            } catch (e: SQLException) {
+                if (e.isLockTimeout()) throw EventStreamLockException(e)
+                throw e
+            }
 
-                val persist: (List<DatabaseEntry>, expectedVersion: Int) -> List<DatabaseEntry> = { entries, expectedVersion ->
-                    if (entries.isEmpty()) {
-                        emptyList()
-                    } else {
-                        connection.prepareStatement(insertEventSql(tableInfo), Statement.RETURN_GENERATED_KEYS).use { ps ->
-                            entries.forEach { entry ->
-                                ps.setObject(1, entry.type, java.sql.Types.OTHER)
-                                ps.setObject(2, entry.id, java.sql.Types.OTHER)
-                                ps.setInt(3, entry.version)
-                                ps.setObject(4, entry.eventPayload, java.sql.Types.OTHER)
-                                ps.setObject(5, entry.metadataPayload, java.sql.Types.OTHER)
-                                ps.addBatch()
-                            }
-                            ps.executeBatchWithExceptionHandling(expectedVersion)
+            val persist: (List<DatabaseEntry>, expectedVersion: Int) -> List<DatabaseEntry> = { entries, expectedVersion ->
+                if (entries.isEmpty()) {
+                    emptyList()
+                } else {
+                    connection.prepareStatement(insertEventSql(tableInfo), Statement.RETURN_GENERATED_KEYS).use { ps ->
+                        entries.forEach { entry ->
+                            ps.setObject(1, entry.type, java.sql.Types.OTHER)
+                            ps.setObject(2, entry.id, java.sql.Types.OTHER)
+                            ps.setInt(3, entry.version)
+                            ps.setObject(4, entry.eventPayload, java.sql.Types.OTHER)
+                            ps.setObject(5, entry.metadataPayload, java.sql.Types.OTHER)
+                            ps.addBatch()
+                        }
+                        ps.executeBatchWithExceptionHandling(expectedVersion)
 
-                            val positions = ps.generatedKeys.use { gk ->
-                                buildList {
-                                    while (gk.next()) {
-                                        add(gk.getLong("position"))
-                                    }
+                        val positions = ps.generatedKeys.use { gk ->
+                            buildList {
+                                while (gk.next()) {
+                                    add(gk.getLong("position"))
                                 }
                             }
-                            entries.mapIndexed { i, entry -> entry.copy(position = positions[i]) }
                         }
+                        entries.mapIndexed { i, entry -> entry.copy(position = positions[i]) }
                     }
                 }
+            }
 
-                val result = connection.prepareStatement(selectEventByStreamIdAndVersionSql(tableInfo)).use { ps ->
-                    ps.setObject(1, streamId, java.sql.Types.OTHER)
-                    ps.setInt(2, sinceVersion)
-                    ps.setInt(3, Int.MAX_VALUE)
-                    ps.executeQuery().use { rs ->
-                        val sequence = sequence {
-                            while (rs.next()) {
-                                yield(rs.databaseEntry())
-                            }
+            connection.prepareStatement(selectEventByStreamIdAndVersionSql(tableInfo)).use { ps ->
+                ps.fetchSize = STREAM_FETCH_SIZE
+                ps.setObject(1, streamId, java.sql.Types.OTHER)
+                ps.setInt(2, sinceVersion)
+                ps.setInt(3, Int.MAX_VALUE)
+                ps.executeQuery().use { rs ->
+                    val sequence = sequence {
+                        while (rs.next()) {
+                            yield(rs.databaseEntry())
                         }
-                        block(sequence, persist)
                     }
+                    block(sequence, persist)
                 }
-                connection.commit()
-                return@jdbc result
-            } catch (t: Throwable) {
-                try {
-                    connection.rollback()
-                } catch (rollbackError: Throwable) {
-                    t.addSuppressed(rollbackError)
-                }
-                throw t
             }
         }
     }
