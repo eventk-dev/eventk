@@ -77,6 +77,8 @@ internal class JdbcDatabaseAdapter(
                 }
 
                 else -> connection.prepareStatement(selectEventByTypeSincePositionSql(tableInfo)).use { ps ->
+                    // Forces a custom plan every execution, so the per-stream_type partial index is always used.
+                    ps.unwrap(org.postgresql.PGStatement::class.java).prepareThreshold = 0
                     ps.setObject(1, type, java.sql.Types.OTHER)
                     ps.setLong(2, sincePosition)
                     ps.setInt(3, batchSize)
